@@ -1,16 +1,14 @@
 #!/usr/bin/env python3
-"""Root helper for Performance Control. Accepts only a fixed set of commands."""
-import json
-import os
-import subprocess
+"""Root helper for Performance Control. Accepts only a fixed set of commands.
+
+profile quiet|balanced|performance   ASUS mode (Whisper/Standard/Performance):
+                                     EC fan table + DTT policy via ODVP0
+fan auto|full                        CPU fan: firmware table or full speed
+"""
+import glob
 import sys
 
-AC = "/usr/local/bin/auto-cpufreq"
-CONF = "/etc/perfctl/fan.json"
-FAN_MODES = ("auto", "quiet", "balanced", "performance", "full", "curve")
-USAGE = ("usage: perfctl-helper profile quiet|balanced|performance | "
-         "governor auto|performance|powersave | turbo auto|always|never | "
-         "fanmode " + "|".join(FAN_MODES) + " | fancurve T1 T2 T3")
+USAGE = "usage: perfctl-helper profile quiet|balanced|performance | fan auto|full"
 
 
 def fail(msg=USAGE):
@@ -18,48 +16,20 @@ def fail(msg=USAGE):
     sys.exit(2)
 
 
-def load_conf():
-    try:
-        with open(CONF) as f:
-            return json.load(f)
-    except (OSError, ValueError):
-        return {"mode": "auto", "curve": [55, 70, 85]}
-
-
-def save_conf(conf):
-    os.makedirs(os.path.dirname(CONF), exist_ok=True)
-    tmp = CONF + ".tmp"
-    with open(tmp, "w") as f:
-        json.dump(conf, f)
-    os.chmod(tmp, 0o644)
-    os.replace(tmp, CONF)
+def asus_hwmon():
+    for h in glob.glob("/sys/class/hwmon/hwmon*"):
+        with open(f"{h}/name") as f:
+            if f.read().strip() == "asus":
+                return h
+    fail("asus hwmon not found")
 
 
 args = sys.argv[1:]
-if not args:
-    fail()
-cmd, rest = args[0], args[1:]
-
-if cmd == "profile" and rest in (["quiet"], ["balanced"], ["performance"]):
+if args[:1] == ["profile"] and args[1:] in (["quiet"], ["balanced"], ["performance"]):
     with open("/sys/firmware/acpi/platform_profile", "w") as f:
-        f.write(rest[0])
-elif cmd == "governor" and rest in (["auto"], ["performance"], ["powersave"]):
-    sys.exit(subprocess.call([AC, "--force=" + ("reset" if rest[0] == "auto" else rest[0])]))
-elif cmd == "turbo" and rest in (["auto"], ["always"], ["never"]):
-    sys.exit(subprocess.call([AC, "--turbo=" + rest[0]]))
-elif cmd == "fanmode" and len(rest) == 1 and rest[0] in FAN_MODES:
-    conf = load_conf()
-    conf["mode"] = rest[0]
-    save_conf(conf)
-elif cmd == "fancurve" and len(rest) == 3:
-    try:
-        t = [int(x) for x in rest]
-    except ValueError:
-        fail()
-    if not (30 <= t[0] < t[1] < t[2] <= 100):
-        fail("curve points must be ascending, between 30 and 100 °C")
-    conf = load_conf()
-    conf["curve"] = t
-    save_conf(conf)
+        f.write(args[1])
+elif args[:1] == ["fan"] and args[1:] in (["auto"], ["full"]):
+    with open(f"{asus_hwmon()}/pwm1_enable", "w") as f:
+        f.write("0" if args[1] == "full" else "2")
 else:
     fail()

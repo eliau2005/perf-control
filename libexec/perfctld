@@ -1,0 +1,122 @@
+#!/usr/bin/env python3
+"""Performance Control state daemon (root).
+
+Publishes /run/perfctl/state.json once a second for the UI: package power
+(RAPL energy counter needs root), effective PL1/PL2/TCC, the skin sensor and
+the Intel DTT target that ASUS's policy selects for the current mode. Power
+limits themselves are owned by thermald (adaptive mode, ASUS GDDV policy);
+this daemon never writes hardware."""
+import glob
+import json
+import os
+import time
+
+STATE = "/run/perfctl/state.json"
+RAPL = "/sys/class/powercap/intel-rapl:0"
+MMIO = "/sys/class/powercap/intel-rapl-mmio:0"
+INT3400 = "/sys/bus/platform/devices/INTC1041:00"
+TCC = "/sys/bus/pci/devices/0000:00:04.0/tcc_offset_degree_celsius"
+THROTTLE = "/sys/devices/system/cpu/cpu0/thermal_throttle/package_throttle_count"
+INTERVAL = 1
+POWER_ALPHA = 0.5
+
+# ASUS X1402ZA DTT policy (research/gddv/README.md): name -> (PL1 min, PL1 max, PL2, TCC offset)
+TARGETS = {
+    "Check": (4, 19, 19, 19), "HOT": (10, 15, 15, 30), "Whisper": (15, 20, 45, 11),
+    "Performance": (35, 38, 45, 5), "Standard": (28, 38, 45, 8),
+    "Standard_Turbo": (38, 45, 45, 8), "Default": (15, 28, 50, 8),
+}
+
+
+def read(path, default=""):
+    try:
+        with open(path) as f:
+            return f.read().strip()
+    except OSError:
+        return default
+
+
+def read_int(path):
+    try:
+        return int(read(path))
+    except ValueError:
+        return None
+
+
+def zone(kind):
+    for z in glob.glob("/sys/class/thermal/thermal_zone*"):
+        if read(f"{z}/type") == kind:
+            return z
+    return None
+
+
+def target(odvp0, odvp5, sen1):
+    """Replays the APCT condition order (first match wins)."""
+    if odvp5 == 255:
+        return "Check"
+    if sen1 is not None and sen1 >= 80.0:
+        return "HOT"
+    if odvp0 == 1:
+        return "Whisper"
+    if odvp0 == 2:
+        return "Performance"
+    if sen1 is not None and sen1 >= 63.0:
+        return "Standard"
+    return "Standard_Turbo"
+
+
+class Power:
+    def __init__(self):
+        self.wrap = read_int(f"{RAPL}/max_energy_range_uj") or 2 ** 32
+        self.last, self.watts = None, None
+
+    def sample(self):
+        e, t = read_int(f"{RAPL}/energy_uj"), time.monotonic()
+        if e is None:
+            return self.watts
+        if self.last:
+            w = ((e - self.last[0]) % self.wrap) / 1e6 / (t - self.last[1])
+            self.watts = w if self.watts is None else POWER_ALPHA * w + (1 - POWER_ALPHA) * self.watts
+        self.last = (e, t)
+        return self.watts
+
+
+def main():
+    os.makedirs(os.path.dirname(STATE), exist_ok=True)
+    sen1 = zone("SEN1")
+    power = Power()
+    throttles, last_throttle = read_int(THROTTLE), 0.0
+    while True:
+        now = time.monotonic()
+        watts = power.sample()
+        skin = read_int(f"{sen1}/temp") if sen1 else None
+        skin = skin / 1000 if skin is not None else None
+        count = read_int(THROTTLE)
+        if count is not None and throttles is not None and count > throttles:
+            last_throttle = now
+        throttles = count
+        odvp0, odvp5 = read_int(f"{INT3400}/odvp0"), read_int(f"{INT3400}/odvp5")
+        name = target(odvp0, odvp5, skin)
+        pl1_lo, pl1_hi, pl2, tcc = TARGETS[name]
+        state = {
+            "power": round(watts, 1) if watts is not None else None,
+            "pl1": (read_int(f"{MMIO}/constraint_0_power_limit_uw") or 0) / 1e6,
+            "pl2": (read_int(f"{MMIO}/constraint_1_power_limit_uw") or 0) / 1e6,
+            "tcc": read_int(TCC),
+            "skin": skin,
+            "odvp0": odvp0,
+            "target": name,
+            "policy": {"pl1_min": pl1_lo, "pl1_max": pl1_hi, "pl2": pl2, "tcc": tcc},
+            "throttled": now - last_throttle < 10,
+            "throttle_count": count,
+        }
+        tmp = STATE + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(state, f)
+        os.chmod(tmp, 0o644)
+        os.replace(tmp, STATE)
+        time.sleep(INTERVAL)
+
+
+if __name__ == "__main__":
+    main()

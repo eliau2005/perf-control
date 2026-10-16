@@ -1,0 +1,36 @@
+[start] profile=balanced odvp0=0 msr PL1=200000 mW | mmio PL1=38000 PL2=45000 mW tcc=8
+target:PL2PowerLimit 45000
+target:PL1MAX 38000
+PL1MAX: raise PL1 to 38000000
+target:PL1MIN 28000
+target:TccOffset 8
+set_int3400 target s1_ts0_63
+set cdev state index 22 state 38000000 wr:38000000
+Condition Set matched:5 target:65
+[quiet] profile=quiet odvp0=1 msr PL1=200000 mW | mmio PL1=15000 PL2=45000 mW tcc=11
+PL1MAX: raise PL1 to 20000000
+target:PL1MIN 15000
+target:TccOffset 11
+set_int3400 target s1_ts0_57
+set cdev state index 22 state 20000000 wr:20000000
+set cdev state index 22 state 20000000 wr:20000000
+set cdev state index 22 state 15000000 wr:15000000
+Condition Set matched:3 target:59
+[performance] profile=performance odvp0=2 msr PL1=200000 mW | mmio PL1=38000 PL2=45000 mW tcc=5
+target:PL1MAX 38000
+target:PL1MIN 35000
+set cdev state index 22 state 35000000 wr:35000000
+target:TccOffset 5
+set_int3400 target s1_ts0_69
+set cdev state index 22 state 20000000 wr:35000000
+set cdev state index 22 state 38000000 wr:38000000
+Condition Set matched:4 target:62
+[balanced] profile=balanced odvp0=0 msr PL1=200000 mW | mmio PL1=38000 PL2=45000 mW tcc=8
+target:PL2PowerLimit 45000
+target:PL1MAX 38000
+target:PL1MIN 28000
+target:TccOffset 8
+set_int3400 target s1_ts0_63
+set cdev state index 22 state 38000000 wr:38000000
+Condition Set matched:5 target:65
+Condition Set matched:5 target:65

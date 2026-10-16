@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
-"""Performance Control: CPU mode, turbo and fan control for this ASUS laptop."""
+"""Performance Control: ASUS performance mode, fan boost and live monitoring.
+
+Power limits are owned by thermald running ASUS's own Intel DTT policy; the
+mode selector only switches the firmware profile (Whisper/Standard/Performance),
+which the EC uses for its fan table and DTT uses to pick PL1/PL2/TCC targets."""
 import collections
 import glob
 import json
 import math
-import pickle
 import sys
 
 import gi
@@ -16,17 +19,20 @@ from gi.repository import Adw, Gio, GLib, Gtk  # noqa: E402
 HELPER = "/usr/local/libexec/perfctl-helper"
 PROFILE = "/sys/firmware/acpi/platform_profile"
 CPU = "/sys/devices/system/cpu"
-GOV_OVERRIDE = "/opt/auto-cpufreq/override.pickle"
-TURBO_OVERRIDE = "/opt/auto-cpufreq/turbo-override.pickle"
-FAN_CONF = "/etc/perfctl/fan.json"
-FAN_STATE = "/run/perfctl/state.json"
-RAPL = "/sys/class/powercap/intel-rapl-mmio:0"  # effective PL1/PL2
+STATE = "/run/perfctl/state.json"
+MMIO = "/sys/class/powercap/intel-rapl-mmio:0"
+PPD = ("net.hadess.PowerProfiles", "/net/hadess/PowerProfiles")
+PPD_MAP = {"quiet": "power-saver", "balanced": "balanced", "performance": "performance"}
 
 FREQ_MAX = 4.7  # GHz, i7-1260P max turbo
 TEMP_MIN, TEMP_MAX = 30, 100
 HISTORY = 120  # seconds
-LEVELS = [("quiet", "Quiet"), ("balanced", "Balanced"),
-          ("performance", "Performance"), ("full", "Full speed")]
+MODES = [("quiet", "Whisper"), ("balanced", "Standard"), ("performance", "Performance")]
+MODE_INFO = {
+    "quiet": "PL1 15–20 W · PL2 45 W · throttles at 89 °C",
+    "balanced": "PL1 38–45 W while the skin sensor is under 63 °C, then 28–38 W · PL2 45 W · throttles at 92 °C",
+    "performance": "PL1 35–38 W · PL2 45 W · throttles at 95 °C",
+}
 
 TEMP_COLOR = (0.90, 0.38, 0.0)
 FAN_COLOR = (0.21, 0.52, 0.89)
@@ -37,8 +43,6 @@ CSS = """
 .chip.on { background: alpha(@accent_bg_color, 0.25); }
 .chip.warn { background: alpha(@error_bg_color, 0.35); }
 """
-REASONS = {"power": "ramped early by CPU power", "emergency": "emergency, hottest core near limit",
-           "throttle-hold": "holding after CPU throttling", "no-sensor": "sensor unreadable"}
 
 
 def read(path, default=""):
@@ -54,14 +58,6 @@ def read_json(path, default):
         with open(path) as f:
             return json.load(f)
     except (OSError, ValueError):
-        return default
-
-
-def read_pickle(path, default):
-    try:
-        with open(path, "rb") as f:
-            return pickle.load(f)
-    except Exception:
         return default
 
 
@@ -140,10 +136,11 @@ class History(Gtk.DrawingArea):
         super().__init__(content_height=150, hexpand=True)
         self.data = collections.deque(maxlen=HISTORY)
         self.fan_max = 6500
+        self.watt_max = 50
         self.set_draw_func(self.draw)
 
-    def push(self, temp, fan, freq):
-        self.data.append((temp, fan, freq))
+    def push(self, temp, fan, freq, watts):
+        self.data.append((temp, fan, freq, watts))
         self.queue_draw()
 
     def draw(self, _a, cr, w, h):
@@ -162,6 +159,7 @@ class History(Gtk.DrawingArea):
             (0, TEMP_COLOR, TEMP_MIN, TEMP_MAX, "Temp"),
             (1, FAN_COLOR, 0, self.fan_max, "Fan"),
             (2, FREQ_COLOR, 0, FREQ_MAX, "Clock"),
+            (3, (0.2, 0.6, 0.4), 0, self.watt_max, "Power"),
         ]
         x = left
         cr.set_font_size(11)
@@ -206,148 +204,15 @@ class History(Gtk.DrawingArea):
             cr.fill()
 
 
-class CurveEditor(Gtk.DrawingArea):
-    """Step curve: temperature thresholds where the fan moves up a level."""
-
-    def __init__(self, on_changed):
-        super().__init__(content_height=200, hexpand=True)
-        self.curve = [55, 70, 85]
-        self.temp = None
-        self.level = None
-        self.on_changed = on_changed
-        self.drag_idx = None
-        self.geom = (0, 0, 1, 1)
-        self.set_draw_func(self.draw)
-        drag = Gtk.GestureDrag()
-        drag.connect("drag-begin", self.drag_begin)
-        drag.connect("drag-update", self.drag_update)
-        drag.connect("drag-end", self.drag_end)
-        self.add_controller(drag)
-        self.start_x = 0
-
-    def t_to_x(self, t):
-        left, top, pw, ph = self.geom
-        return left + pw * (t - TEMP_MIN) / (TEMP_MAX - TEMP_MIN)
-
-    def x_to_t(self, x):
-        left, top, pw, ph = self.geom
-        return TEMP_MIN + (x - left) / pw * (TEMP_MAX - TEMP_MIN)
-
-    def lvl_to_y(self, lvl):
-        left, top, pw, ph = self.geom
-        return top + ph - (lvl + 0.5) * ph / 4
-
-    def drag_begin(self, g, x, y):
-        best = None
-        for i, t in enumerate(self.curve):
-            hx, hy = self.t_to_x(t), (self.lvl_to_y(i) + self.lvl_to_y(i + 1)) / 2
-            d = math.hypot(x - hx, y - hy)
-            if d < 28 and (best is None or d < best[0]):
-                best = (d, i)
-        self.drag_idx = best[1] if best else None
-        self.start_x = x
-        if self.drag_idx is None:
-            g.set_state(Gtk.EventSequenceState.DENIED)
-
-    def drag_update(self, _g, dx, _dy):
-        if self.drag_idx is None:
-            return
-        i = self.drag_idx
-        t = round(self.x_to_t(self.start_x + dx))
-        lo = TEMP_MIN + 1 if i == 0 else self.curve[i - 1] + 3
-        hi = TEMP_MAX if i == 2 else self.curve[i + 1] - 3
-        self.curve[i] = max(lo, min(hi, t))
-        self.queue_draw()
-
-    def drag_end(self, *_):
-        if self.drag_idx is not None:
-            self.drag_idx = None
-            self.on_changed(list(self.curve))
-            self.queue_draw()
-
-    def draw(self, _a, cr, w, h):
-        c = fg(self)
-        left, right, top, bottom = 92, 14, 10, 26
-        pw, ph = w - left - right, h - top - bottom
-        self.geom = (left, top, pw, ph)
-        cr.set_font_size(11)
-
-        # level bands
-        for i, (_k, name) in enumerate(LEVELS):
-            y0 = top + ph - (i + 1) * ph / 4
-            cr.set_source_rgba(*heat(i / 3), 0.07 + 0.03 * i)
-            cr.rectangle(left, y0, pw, ph / 4)
-            cr.fill()
-            cr.set_source_rgba(*c, 0.75)
-            ext = cr.text_extents(name)
-            cr.move_to(left - 10 - ext.x_advance, self.lvl_to_y(i) + 4)
-            cr.show_text(name)
-
-        # temperature axis
-        cr.set_source_rgba(*c, 0.55)
-        for t in range(TEMP_MIN, TEMP_MAX + 1, 10):
-            x = self.t_to_x(t)
-            s = f"{t}°"
-            cr.move_to(x - cr.text_extents(s).x_advance / 2, h - 8)
-            cr.show_text(s)
-            cr.set_source_rgba(*c, 0.08)
-            cr.move_to(x, top)
-            cr.line_to(x, top + ph)
-            cr.stroke()
-            cr.set_source_rgba(*c, 0.55)
-
-        # step line
-        pts = [(self.t_to_x(TEMP_MIN), self.lvl_to_y(0))]
-        for i, t in enumerate(self.curve):
-            pts.append((self.t_to_x(t), self.lvl_to_y(i)))
-            pts.append((self.t_to_x(t), self.lvl_to_y(i + 1)))
-        pts.append((self.t_to_x(TEMP_MAX), self.lvl_to_y(3)))
-        cr.move_to(*pts[0])
-        for p in pts[1:]:
-            cr.line_to(*p)
-        cr.set_source_rgb(*FAN_COLOR)
-        cr.set_line_width(3)
-        cr.stroke()
-
-        # handles
-        for i, t in enumerate(self.curve):
-            x, y = self.t_to_x(t), (self.lvl_to_y(i) + self.lvl_to_y(i + 1)) / 2
-            cr.new_sub_path()
-            cr.arc(x, y, 9 if self.drag_idx == i else 7, 0, 2 * math.pi)
-            cr.set_source_rgb(*FAN_COLOR)
-            cr.fill_preserve()
-            cr.set_source_rgb(1, 1, 1)
-            cr.set_line_width(2)
-            cr.stroke()
-            s = f"{t}°"
-            cr.set_source_rgba(*c, 0.9)
-            cr.move_to(x + 12, y + 4)
-            cr.show_text(s)
-
-        # current temperature
-        if self.temp is not None:
-            x = self.t_to_x(max(TEMP_MIN, min(TEMP_MAX, self.temp)))
-            cr.set_source_rgb(*TEMP_COLOR)
-            cr.set_line_width(1.5)
-            cr.set_dash([4, 3])
-            cr.move_to(x, top)
-            cr.line_to(x, top + ph)
-            cr.stroke()
-            cr.set_dash([])
-            if self.level is not None:
-                cr.new_sub_path()
-                cr.arc(x, self.lvl_to_y(self.level), 5, 0, 2 * math.pi)
-                cr.fill()
-
-
 class Window(Adw.ApplicationWindow):
     def __init__(self, app):
         super().__init__(application=app, title="Performance Control")
-        self.set_default_size(560, 900)
+        self.set_default_size(560, 760)
         self.syncing = False
         self.asus = hwmon("asus")
         self.coretemp = hwmon("coretemp")
         self.fan_max = 6500
+        self.bus = Gio.bus_get_sync(Gio.BusType.SYSTEM, None)
 
         css = Gtk.CssProvider()
         css.load_from_string(CSS)
@@ -370,25 +235,19 @@ class Window(Adw.ApplicationWindow):
         self.g_temp = Gauge("CPU temp", "°C", TEMP_MIN, TEMP_MAX)
         self.g_fan = Gauge("Fan", "RPM", 0, self.fan_max, FAN_COLOR)
         self.g_freq = Gauge("CPU clock", "GHz", 0, FREQ_MAX, FREQ_COLOR, "{:.1f}")
-        self.pl2 = int(read(f"{RAPL}/constraint_1_power_limit_uw", "40000000")) // 1000000
-        self.g_watts = Gauge("CPU power", "W", 0, self.pl2, None, "{:.1f}")
+        self.g_watts = Gauge("CPU power", "W", 0, 45, None, "{:.1f}")
         for g in (self.g_temp, self.g_fan, self.g_freq, self.g_watts):
             gauges.append(g)
         card.append(gauges)
-        chips = Gtk.Box(spacing=6, halign=Gtk.Align.CENTER, margin_bottom=6)
-        self.c_power = Gtk.Label(css_classes=["chip"])
-        self.c_turbo = Gtk.Label(css_classes=["chip"])
-        self.c_gov = Gtk.Label(css_classes=["chip"])
-        self.c_limits = Gtk.Label(css_classes=["chip"])
-        self.c_throttle = Gtk.Label(label="Throttling", css_classes=["chip", "warn"],
-                                    visible=False)
-        for ch in (self.c_power, self.c_turbo, self.c_gov):
-            chips.append(ch)
-        card.append(chips)
-        chips2 = Gtk.Box(spacing=6, halign=Gtk.Align.CENTER, margin_bottom=6)
-        for ch in (self.c_limits, self.c_throttle):
-            chips2.append(ch)
-        card.append(chips2)
+        self.chips = {}
+        for row_names in (("power", "turbo", "gov"), ("limits", "target"), ("engine", "throttle")):
+            box = Gtk.Box(spacing=6, halign=Gtk.Align.CENTER, margin_bottom=6)
+            for n in row_names:
+                self.chips[n] = Gtk.Label(css_classes=["chip"])
+                box.append(self.chips[n])
+            card.append(box)
+        self.chips["throttle"].set_label("Thermal throttling")
+        self.chips["throttle"].set_css_classes(["chip", "warn"])
         top.add(card)
         page.add(top)
 
@@ -396,106 +255,67 @@ class Window(Adw.ApplicationWindow):
         hist = Adw.PreferencesGroup(title="Live")
         hcard = Gtk.Box(css_classes=["card"], margin_top=2)
         self.history = History()
-        self.history.set_margin_start(6)
-        self.history.set_margin_end(6)
-        self.history.set_margin_top(6)
-        self.history.set_margin_bottom(6)
+        for side in ("start", "end", "top", "bottom"):
+            getattr(self.history, f"set_margin_{side}")(6)
         hcard.append(self.history)
         hist.add(hcard)
         page.add(hist)
 
-        # CPU controls
-        ctl = Adw.PreferencesGroup(title="CPU")
-        self.profile = self.toggle_row(
-            ctl, "Performance mode", "ASUS power limits and fan behaviour",
-            [("quiet", "Quiet"), ("balanced", "Balanced"), ("performance", "Performance")],
-            lambda v: self.run("profile", v))
-        self.profile_row = self.last_row
-        self.turbo = self.toggle_row(
-            ctl, "Turbo boost", f"Up to {FREQ_MAX} GHz · Auto lets auto-cpufreq decide",
-            [("auto", "Auto"), ("always", "On"), ("never", "Off")],
-            lambda v: self.run("turbo", v))
-        self.gov = self.toggle_row(
-            ctl, "CPU governor", "Auto lets auto-cpufreq decide",
-            [("auto", "Auto"), ("performance", "Performance"), ("powersave", "Powersave")],
-            lambda v: self.run("governor", v))
+        # Controls
+        ctl = Adw.PreferencesGroup(
+            title="Mode",
+            description="Same modes as MyASUS: the firmware picks the fan table and Intel DTT "
+                        "(via thermald) applies ASUS's power-limit policy for the mode.")
+        self.mode_row = Adw.ActionRow(title="Performance mode")
+        self.mode = Adw.ToggleGroup(valign=Gtk.Align.CENTER)
+        for name, label in MODES:
+            self.mode.add(Adw.Toggle(name=name, label=label))
+        self.mode.connect("notify::active-name",
+                          lambda t, _p: None if self.syncing else self.set_mode(t.get_active_name()))
+        self.mode_row.add_suffix(self.mode)
+        ctl.add(self.mode_row)
+        self.fan_row = Adw.ActionRow(title="Fan", subtitle="Full speed overrides the firmware fan table")
+        self.fan = Adw.ToggleGroup(valign=Gtk.Align.CENTER)
+        for name, label in (("auto", "Auto"), ("full", "Full speed")):
+            self.fan.add(Adw.Toggle(name=name, label=label))
+        self.fan.connect("notify::active-name",
+                         lambda t, _p: None if self.syncing else self.run("fan", t.get_active_name()))
+        self.fan_row.add_suffix(self.fan)
+        ctl.add(self.fan_row)
         page.add(ctl)
-
-        # Fan controls
-        fan = Adw.PreferencesGroup(
-            title="Fan",
-            description="This laptop's firmware exposes four fan levels, not exact RPM.")
-        self.fan_mode = self.toggle_row(
-            fan, "Fan control", None,
-            [("auto", "Auto"), ("manual", "Manual"), ("curve", "Curve")],
-            self.fan_mode_changed)
-        self.fan_mode_row = self.last_row
-        self.fan_level = self.toggle_row(
-            fan, "Fan level", "Quiet and Balanced also lower CPU power",
-            [(k, n.split()[0]) for k, n in LEVELS],
-            lambda v: self.run("fanmode", v))
-        self.fan_level_row = self.last_row
-        self.curve_row = Adw.PreferencesRow(activatable=False)
-        cbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4,
-                       margin_top=10, margin_bottom=10, margin_start=10, margin_end=10)
-        self.curve_label = Gtk.Label(xalign=0, css_classes=["dim-label"], wrap=True)
-        cbox.append(self.curve_label)
-        self.curve = CurveEditor(lambda c: self.run("fancurve", *map(str, c)))
-        cbox.append(self.curve)
-        self.curve_row.set_child(cbox)
-        fan.add(self.curve_row)
-        page.add(fan)
 
         self.sync_controls()
         self.refresh()
         GLib.timeout_add_seconds(1, self.refresh)
 
-    def toggle_row(self, group, title, subtitle, options, on_change):
-        row = Adw.ActionRow(title=title, subtitle=subtitle or "")
-        tg = Adw.ToggleGroup(valign=Gtk.Align.CENTER)
-        for name, label in options:
-            tg.add(Adw.Toggle(name=name, label=label))
-        tg.connect("notify::active-name",
-                   lambda t, _p: None if self.syncing else on_change(t.get_active_name()))
-        row.add_suffix(tg)
-        group.add(row)
-        self.last_row = row
-        return tg
-
+    # -- helpers -----------------------------------------------------------
     def set_toggle(self, tg, name):
         self.syncing = True
         tg.set_active_name(name)
         self.syncing = False
 
-    def fan_mode_changed(self, v):
-        if v == "manual":
-            self.run("fanmode", self.fan_level.get_active_name() or "balanced")
-        else:
-            self.run("fanmode", v)
+    def name_has_owner(self, name):
+        try:
+            r = self.bus.call_sync("org.freedesktop.DBus", "/org/freedesktop/DBus",
+                                   "org.freedesktop.DBus", "NameHasOwner",
+                                   GLib.Variant("(s)", (name,)), None, 0, 200, None)
+            return r.unpack()[0]
+        except GLib.Error:
+            return False
 
-    def sync_controls(self):
-        self.set_toggle(self.profile, read(PROFILE, "balanced"))
-        self.set_toggle(self.turbo, read_pickle(TURBO_OVERRIDE, "auto"))
-        gov = read_pickle(GOV_OVERRIDE, None)
-        self.set_toggle(self.gov, gov if gov in ("performance", "powersave") else "auto")
-
-        conf = read_json(FAN_CONF, {"mode": "auto", "curve": [55, 70, 85]})
-        mode = conf.get("mode", "auto")
-        kind = "manual" if mode in dict(LEVELS) else mode
-        self.set_toggle(self.fan_mode, kind)
-        if kind == "manual":
-            self.set_toggle(self.fan_level, mode)
-        if self.curve.drag_idx is None:
-            self.curve.curve = list(conf.get("curve", [55, 70, 85]))
-        self.fan_level_row.set_visible(kind == "manual")
-        self.curve_row.set_visible(kind == "curve")
-        self.profile_row.set_sensitive(kind == "auto")
-        self.profile_row.set_subtitle(
-            "ASUS power limits and fan behaviour" if kind == "auto"
-            else "Controlled by the fan setting below")
-        installed = GLib.file_test(FAN_STATE, GLib.FileTest.EXISTS)
-        self.fan_mode_row.set_sensitive(installed)
-        self.fan_mode_row.set_subtitle("" if installed else "Fan service not installed")
+    def set_mode(self, mode):
+        """Prefer power-profiles-daemon so GNOME's power mode stays in sync."""
+        if self.name_has_owner(PPD[0]):
+            try:
+                self.bus.call_sync(PPD[0], PPD[1], "org.freedesktop.DBus.Properties", "Set",
+                                   GLib.Variant("(ssv)", (PPD[0], "ActiveProfile",
+                                                          GLib.Variant("s", PPD_MAP[mode]))),
+                                   None, 0, 2000, None)
+                GLib.timeout_add(500, lambda: (self.sync_controls(), False)[1])
+                return
+            except GLib.Error as e:
+                self.toasts.add_toast(Adw.Toast(title=f"power-profiles-daemon: {e.message}"))
+        self.run("profile", mode)
 
     def run(self, *args):
         proc = Gio.Subprocess.new(
@@ -513,10 +333,21 @@ class Window(Adw.ApplicationWindow):
 
         proc.communicate_utf8_async(None, None, done)
 
+    def sync_controls(self):
+        mode = read(PROFILE, "balanced")
+        self.set_toggle(self.mode, mode)
+        self.mode_row.set_subtitle(MODE_INFO.get(mode, ""))
+        full = self.asus and read(f"{self.asus}/pwm1_enable") == "0"
+        self.set_toggle(self.fan, "full" if full else "auto")
+
+    def chip(self, name, text, on=None):
+        c = self.chips[name]
+        c.set_label(text)
+        if on is not None:
+            c.set_css_classes(["chip", "on"] if on else ["chip"])
+
     def refresh(self):
-        temp = None
-        if self.coretemp:
-            temp = int(read(f"{self.coretemp}/temp1_input", "0")) / 1000
+        temp = int(read(f"{self.coretemp}/temp1_input", "0")) / 1000 if self.coretemp else None
         rpm = int(read(f"{self.asus}/fan1_input", "0")) if self.asus else None
         if rpm and rpm > self.fan_max:
             self.fan_max = int(math.ceil(rpm * 1.15 / 500) * 500)
@@ -524,43 +355,38 @@ class Window(Adw.ApplicationWindow):
         freqs = [int(read(p, "0")) / 1e6
                  for p in glob.glob(f"{CPU}/cpu[0-9]*/cpufreq/scaling_cur_freq")]
         freq = max(freqs) if freqs else None
+        state = read_json(STATE, {})
+        watts = state.get("power")
+        pl1 = int(read(f"{MMIO}/constraint_0_power_limit_uw", "0")) // 1000000
+        pl2 = int(read(f"{MMIO}/constraint_1_power_limit_uw", "0")) // 1000000
 
         self.g_temp.set_value(temp)
         self.g_fan.set_value(rpm, self.fan_max)
         self.g_freq.set_value(freq)
-        self.history.push(temp, rpm, freq)
+        self.g_watts.set_value(watts, max(pl2, 1))
+        self.history.watt_max = max(pl2, 1)
+        self.history.push(temp, rpm, freq, watts)
 
         on_ac = read("/sys/class/power_supply/AC0/online") == "1"
-        self.c_power.set_label("⚡ Plugged in" if on_ac
-                               else f"🔋 {read('/sys/class/power_supply/BAT0/capacity')}%")
+        self.chip("power", "⚡ Plugged in" if on_ac
+                  else f"🔋 {read('/sys/class/power_supply/BAT0/capacity')}%")
         turbo = read(f"{CPU}/intel_pstate/no_turbo") != "1"
-        self.c_turbo.set_label(f"Turbo {'on' if turbo else 'off'}")
-        self.c_turbo.set_css_classes(["chip", "on"] if turbo else ["chip"])
-        self.c_gov.set_label(read(f"{CPU}/cpufreq/policy0/scaling_governor").capitalize())
-
-        pl1 = int(read(f"{RAPL}/constraint_0_power_limit_uw", "0")) // 1000000
-        pl2 = int(read(f"{RAPL}/constraint_1_power_limit_uw", "0")) // 1000000
-        self.c_limits.set_label(f"PL1 {pl1} W · PL2 {pl2} W")
-
-        state = read_json(FAN_STATE, {})
-        watts = state.get("power")
-        self.g_watts.set_value(watts, max(pl2, 1))
-        self.c_throttle.set_visible(bool(state.get("throttled")))
-        self.curve.temp = temp
-        lvl = state.get("level")
-        keys = [k for k, _n in LEVELS]
-        self.curve.level = keys.index(lvl) if lvl in keys else None
-        self.curve.queue_draw()
-        if lvl:
-            why = REASONS.get(state.get("reason"))
-            self.curve_label.set_label(
-                f"Drag the points to set where the fan steps up. "
-                f"Now: {dict(LEVELS)[lvl]} at {temp:.0f} °C"
-                + (f" ({why})." if why else "."))
+        self.chip("turbo", f"Turbo {'on' if turbo else 'off'}", turbo)
+        self.chip("gov", f"{read(f'{CPU}/cpufreq/policy0/scaling_governor').capitalize()} · EPP "
+                         f"{read(f'{CPU}/cpufreq/policy0/energy_performance_preference').replace('_', ' ')}")
+        self.chip("limits", f"PL1 {pl1} W · PL2 {pl2} W")
+        tgt, pol, skin = state.get("target"), state.get("policy", {}), state.get("skin")
+        if tgt:
+            self.chip("target", f"DTT {tgt.replace('_', ' ')} · PL1 {pol.get('pl1_min')}–{pol.get('pl1_max')} W"
+                                + (f" · skin {skin:.0f} °C" if skin is not None else ""), True)
         else:
-            self.curve_label.set_label("Drag the points to set where the fan steps up.")
-        if self.fan_mode.get_active_name() == "auto":
-            self.set_toggle(self.profile, read(PROFILE, "balanced"))
+            self.chip("target", "State daemon not running", False)
+        thermald = self.name_has_owner("org.freedesktop.thermald")
+        self.chip("engine", "Policy: thermald (ASUS DTT)" if thermald else "Policy: none — firmware defaults",
+                  thermald)
+        self.chips["throttle"].set_visible(bool(state.get("throttled")))
+        if not self.syncing:
+            self.sync_controls()
         return True
 
 

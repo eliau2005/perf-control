@@ -1,0 +1,36 @@
+2.5.13
+active
+Oct 17 01:54:58 ubuntu systemd[1]: Starting thermald.service - Thermal Daemon Service...
+Oct 17 01:54:58 ubuntu thermald[1048478]: 32 CPUID levels; family:model:stepping 0x6:9a:3 (6:154:3)
+Oct 17 01:54:58 ubuntu thermald[1048478]: 32 CPUID levels; family:model:stepping 0x6:9a:3 (6:154:3)
+Oct 17 01:54:58 ubuntu thermald[1048478]: Polling mode is enabled: 4
+Oct 17 01:54:58 ubuntu systemd[1]: Started thermald.service - Thermal Daemon Service.
+--- state
+profile=balanced odvp0=0
+intel-rapl:0 PL1=15000 mW PL2=48000 mW tau=31981568
+intel-rapl-mmio:0 PL1=28000 mW PL2=45000 mW tau=27983872
+tcc=8
+--- thermald log
+Oct 17 01:54:56 ubuntu systemd[1]: Stopping thermald.service - Thermal Daemon Service...
+Oct 17 01:54:56 ubuntu thermald[1694]: Terminating ...
+Oct 17 01:54:57 ubuntu thermald[1694]: terminating on user request ..
+Oct 17 01:54:58 ubuntu systemd[1]: thermald.service: Deactivated successfully.
+Oct 17 01:54:58 ubuntu systemd[1]: Stopped thermald.service - Thermal Daemon Service.
+Oct 17 01:54:58 ubuntu systemd[1]: thermald.service: Consumed 2.471s CPU time over 8h 5min 8.716s wall clock time, 3.8M memory peak.
+Oct 17 01:54:58 ubuntu systemd[1]: Starting thermald.service - Thermal Daemon Service...
+Oct 17 01:54:58 ubuntu thermald[1048478]: 32 CPUID levels; family:model:stepping 0x6:9a:3 (6:154:3)
+Oct 17 01:54:58 ubuntu thermald[1048478]: 32 CPUID levels; family:model:stepping 0x6:9a:3 (6:154:3)
+Oct 17 01:54:58 ubuntu thermald[1048478]: Polling mode is enabled: 4
+Oct 17 01:54:58 ubuntu systemd[1]: Started thermald.service - Thermal Daemon Service.
+Oct 17 01:55:01 ubuntu systemd[1]: Stopping thermald.service - Thermal Daemon Service...
+Oct 17 01:55:01 ubuntu thermald[1048478]: Terminating ...
+Oct 17 01:55:01 ubuntu thermald[1048478]: Unable to find a zone for STG0
+Oct 17 01:55:02 ubuntu thermald[1048478]: terminating on user request ..
+Oct 17 01:55:03 ubuntu systemd[1]: thermald.service: Deactivated successfully.
+Oct 17 01:55:03 ubuntu systemd[1]: Stopped thermald.service - Thermal Daemon Service.
+Oct 17 01:55:03 ubuntu systemd[1]: Starting thermald.service - Thermal Daemon Service...
+Oct 17 01:55:03 ubuntu thermald[1048806]: 32 CPUID levels; family:model:stepping 0x6:9a:3 (6:154:3)
+Oct 17 01:55:03 ubuntu thermald[1048806]: 32 CPUID levels; family:model:stepping 0x6:9a:3 (6:154:3)
+Oct 17 01:55:04 ubuntu thermald[1048806]: Polling mode is enabled: 4
+Oct 17 01:55:04 ubuntu systemd[1]: Started thermald.service - Thermal Daemon Service.
+Oct 17 01:55:08 ubuntu thermald[1048806]: Unable to find a zone for STG0

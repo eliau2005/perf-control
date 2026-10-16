@@ -1,0 +1,12 @@
+[Unit]
+Description=Performance Control state daemon
+After=thermald.service
+
+[Service]
+ExecStart=/usr/local/libexec/perfctld
+Restart=on-failure
+RuntimeDirectory=perfctl
+RuntimeDirectoryMode=0755
+
+[Install]
+WantedBy=multi-user.target
