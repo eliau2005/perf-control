@@ -1,1 +1,1 @@
-config: B5 = B3 but platform_profile=performance (odvp0=2 -> DTT target 62 Performance: PL1 35-38 W, PL2 45 W, TCC 5 -> 95 C; EC Performance fan table). auto-cpufreq active turbo=always. kernel=7.0.0-38-generic date=2026-10-17T02:22:47+03:00
+config: B5 = B3 but platform_profile=performance (odvp0=2 -> DTT target 62 Performance: PL1 35-38 W, PL2 45 W, TCC 5 -> 95 C; EC Performance fan table). auto-cpufreq active turbo=always. Root monitor started 02:37 (after the queued pkexec was authenticated): power data covers the last ~7 min of sustained, the bursts and mixed.
