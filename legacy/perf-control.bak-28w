@@ -1,0 +1,554 @@
+#!/usr/bin/env python3
+"""Performance Control: CPU mode, turbo and fan control for this ASUS laptop."""
+import collections
+import glob
+import json
+import math
+import pickle
+import sys
+
+import gi
+
+gi.require_version("Gtk", "4.0")
+gi.require_version("Adw", "1")
+from gi.repository import Adw, Gio, GLib, Gtk  # noqa: E402
+
+HELPER = "/usr/local/libexec/perfctl-helper"
+PROFILE = "/sys/firmware/acpi/platform_profile"
+CPU = "/sys/devices/system/cpu"
+GOV_OVERRIDE = "/opt/auto-cpufreq/override.pickle"
+TURBO_OVERRIDE = "/opt/auto-cpufreq/turbo-override.pickle"
+FAN_CONF = "/etc/perfctl/fan.json"
+FAN_STATE = "/run/perfctl/state.json"
+
+FREQ_MAX = 4.7  # GHz, i7-1260P max turbo
+TEMP_MIN, TEMP_MAX = 30, 100
+HISTORY = 120  # seconds
+LEVELS = [("quiet", "Quiet"), ("balanced", "Balanced"),
+          ("performance", "Performance"), ("full", "Full speed")]
+
+TEMP_COLOR = (0.90, 0.38, 0.0)
+FAN_COLOR = (0.21, 0.52, 0.89)
+FREQ_COLOR = (0.57, 0.25, 0.67)
+CSS = """
+.gauge-card { padding: 12px 6px 6px 6px; }
+.chip { padding: 4px 12px; border-radius: 999px; background: alpha(currentColor, 0.08); font-size: 0.9em; }
+.chip.on { background: alpha(@accent_bg_color, 0.25); }
+"""
+
+
+def read(path, default=""):
+    try:
+        with open(path) as f:
+            return f.read().strip()
+    except OSError:
+        return default
+
+
+def read_json(path, default):
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return default
+
+
+def read_pickle(path, default):
+    try:
+        with open(path, "rb") as f:
+            return pickle.load(f)
+    except Exception:
+        return default
+
+
+def hwmon(name):
+    for h in glob.glob("/sys/class/hwmon/hwmon*"):
+        if read(f"{h}/name") == name:
+            return h
+    return None
+
+
+def fg(widget):
+    c = widget.get_color()
+    return c.red, c.green, c.blue
+
+
+def heat(frac):
+    """Green -> amber -> red for 0..1."""
+    frac = max(0.0, min(1.0, frac))
+    if frac < 0.5:
+        return (0.20 + 1.4 * frac * 0.55, 0.66, 0.33 - frac * 0.4)
+    return (0.97, 0.66 - (frac - 0.5) * 1.1, 0.13)
+
+
+class Gauge(Gtk.DrawingArea):
+    def __init__(self, title, unit, lo, hi, color=None, fmt="{:.0f}"):
+        super().__init__(content_width=140, content_height=130, hexpand=True)
+        self.title, self.unit, self.lo, self.hi = title, unit, lo, hi
+        self.color, self.fmt, self.value = color, fmt, None
+        self.set_draw_func(self.draw)
+
+    def set_value(self, v, hi=None):
+        self.value = v
+        if hi:
+            self.hi = hi
+        self.queue_draw()
+
+    def draw(self, _a, cr, w, h):
+        r_fg = fg(self)
+        cx, cy = w / 2, h * 0.52
+        r = min(w, h * 1.15) * 0.40
+        start, sweep = math.radians(135), math.radians(270)
+        cr.set_line_width(r * 0.16)
+        cr.set_line_cap(1)  # round
+        cr.set_source_rgba(*r_fg, 0.12)
+        cr.arc(cx, cy, r, start, start + sweep)
+        cr.stroke()
+        if self.value is not None:
+            frac = max(0.0, min(1.0, (self.value - self.lo) / (self.hi - self.lo)))
+            cr.set_source_rgb(*(self.color or heat(frac)))
+            cr.arc(cx, cy, r, start, start + max(sweep * frac, 0.01))
+            cr.stroke()
+            text = self.fmt.format(self.value)
+        else:
+            text = "–"
+        cr.set_source_rgb(*r_fg)
+        cr.select_font_face("Sans", 0, 1)
+        cr.set_font_size(r * 0.52)
+        ext = cr.text_extents(text)
+        cr.move_to(cx - ext.width / 2 - ext.x_bearing, cy + ext.height / 2 - r * 0.08)
+        cr.show_text(text)
+        cr.select_font_face("Sans", 0, 0)
+        cr.set_font_size(r * 0.22)
+        cr.set_source_rgba(*r_fg, 0.6)
+        ext = cr.text_extents(self.unit)
+        cr.move_to(cx - ext.width / 2, cy + r * 0.45)
+        cr.show_text(self.unit)
+        cr.set_font_size(max(11, r * 0.24))
+        cr.set_source_rgba(*r_fg, 0.85)
+        ext = cr.text_extents(self.title)
+        cr.move_to(cx - ext.width / 2, h - 4)
+        cr.show_text(self.title)
+
+
+class History(Gtk.DrawingArea):
+    def __init__(self):
+        super().__init__(content_height=150, hexpand=True)
+        self.data = collections.deque(maxlen=HISTORY)
+        self.fan_max = 6500
+        self.set_draw_func(self.draw)
+
+    def push(self, temp, fan, freq):
+        self.data.append((temp, fan, freq))
+        self.queue_draw()
+
+    def draw(self, _a, cr, w, h):
+        c = fg(self)
+        left, right, top, bottom = 8, 8, 22, 8
+        pw, ph = w - left - right, h - top - bottom
+        cr.set_line_width(1)
+        cr.set_source_rgba(*c, 0.10)
+        for i in range(5):
+            y = top + ph * i / 4
+            cr.move_to(left, y)
+            cr.line_to(left + pw, y)
+        cr.stroke()
+
+        series = [
+            (0, TEMP_COLOR, TEMP_MIN, TEMP_MAX, "Temp"),
+            (1, FAN_COLOR, 0, self.fan_max, "Fan"),
+            (2, FREQ_COLOR, 0, FREQ_MAX, "Clock"),
+        ]
+        x = left
+        cr.set_font_size(11)
+        for _i, col, _lo, _hi, name in series:
+            cr.set_source_rgb(*col)
+            cr.rectangle(x, 6, 10, 10)
+            cr.fill()
+            cr.set_source_rgba(*c, 0.8)
+            cr.move_to(x + 14, 15)
+            cr.show_text(name)
+            x += 14 + cr.text_extents(name).x_advance + 16
+        cr.set_source_rgba(*c, 0.5)
+        label = f"last {HISTORY // 60} min"
+        cr.move_to(w - right - cr.text_extents(label).x_advance, 15)
+        cr.show_text(label)
+
+        n = len(self.data)
+        if n < 2:
+            return
+        step = pw / (HISTORY - 1)
+        x0 = left + pw - step * (n - 1)
+        for idx, col, lo, hi, _name in series:
+            pts = []
+            for i, row in enumerate(self.data):
+                v = row[idx]
+                if v is None:
+                    continue
+                f = max(0.0, min(1.0, (v - lo) / (hi - lo)))
+                pts.append((x0 + i * step, top + ph * (1 - f)))
+            if len(pts) < 2:
+                continue
+            cr.move_to(*pts[0])
+            for p in pts[1:]:
+                cr.line_to(*p)
+            cr.set_source_rgb(*col)
+            cr.set_line_width(2)
+            cr.stroke_preserve()
+            cr.line_to(pts[-1][0], top + ph)
+            cr.line_to(pts[0][0], top + ph)
+            cr.close_path()
+            cr.set_source_rgba(*col, 0.10)
+            cr.fill()
+
+
+class CurveEditor(Gtk.DrawingArea):
+    """Step curve: temperature thresholds where the fan moves up a level."""
+
+    def __init__(self, on_changed):
+        super().__init__(content_height=200, hexpand=True)
+        self.curve = [55, 70, 85]
+        self.temp = None
+        self.level = None
+        self.on_changed = on_changed
+        self.drag_idx = None
+        self.geom = (0, 0, 1, 1)
+        self.set_draw_func(self.draw)
+        drag = Gtk.GestureDrag()
+        drag.connect("drag-begin", self.drag_begin)
+        drag.connect("drag-update", self.drag_update)
+        drag.connect("drag-end", self.drag_end)
+        self.add_controller(drag)
+        self.start_x = 0
+
+    def t_to_x(self, t):
+        left, top, pw, ph = self.geom
+        return left + pw * (t - TEMP_MIN) / (TEMP_MAX - TEMP_MIN)
+
+    def x_to_t(self, x):
+        left, top, pw, ph = self.geom
+        return TEMP_MIN + (x - left) / pw * (TEMP_MAX - TEMP_MIN)
+
+    def lvl_to_y(self, lvl):
+        left, top, pw, ph = self.geom
+        return top + ph - (lvl + 0.5) * ph / 4
+
+    def drag_begin(self, g, x, y):
+        best = None
+        for i, t in enumerate(self.curve):
+            hx, hy = self.t_to_x(t), (self.lvl_to_y(i) + self.lvl_to_y(i + 1)) / 2
+            d = math.hypot(x - hx, y - hy)
+            if d < 28 and (best is None or d < best[0]):
+                best = (d, i)
+        self.drag_idx = best[1] if best else None
+        self.start_x = x
+        if self.drag_idx is None:
+            g.set_state(Gtk.EventSequenceState.DENIED)
+
+    def drag_update(self, _g, dx, _dy):
+        if self.drag_idx is None:
+            return
+        i = self.drag_idx
+        t = round(self.x_to_t(self.start_x + dx))
+        lo = TEMP_MIN + 1 if i == 0 else self.curve[i - 1] + 3
+        hi = TEMP_MAX if i == 2 else self.curve[i + 1] - 3
+        self.curve[i] = max(lo, min(hi, t))
+        self.queue_draw()
+
+    def drag_end(self, *_):
+        if self.drag_idx is not None:
+            self.drag_idx = None
+            self.on_changed(list(self.curve))
+            self.queue_draw()
+
+    def draw(self, _a, cr, w, h):
+        c = fg(self)
+        left, right, top, bottom = 92, 14, 10, 26
+        pw, ph = w - left - right, h - top - bottom
+        self.geom = (left, top, pw, ph)
+        cr.set_font_size(11)
+
+        # level bands
+        for i, (_k, name) in enumerate(LEVELS):
+            y0 = top + ph - (i + 1) * ph / 4
+            cr.set_source_rgba(*heat(i / 3), 0.07 + 0.03 * i)
+            cr.rectangle(left, y0, pw, ph / 4)
+            cr.fill()
+            cr.set_source_rgba(*c, 0.75)
+            ext = cr.text_extents(name)
+            cr.move_to(left - 10 - ext.x_advance, self.lvl_to_y(i) + 4)
+            cr.show_text(name)
+
+        # temperature axis
+        cr.set_source_rgba(*c, 0.55)
+        for t in range(TEMP_MIN, TEMP_MAX + 1, 10):
+            x = self.t_to_x(t)
+            s = f"{t}°"
+            cr.move_to(x - cr.text_extents(s).x_advance / 2, h - 8)
+            cr.show_text(s)
+            cr.set_source_rgba(*c, 0.08)
+            cr.move_to(x, top)
+            cr.line_to(x, top + ph)
+            cr.stroke()
+            cr.set_source_rgba(*c, 0.55)
+
+        # step line
+        pts = [(self.t_to_x(TEMP_MIN), self.lvl_to_y(0))]
+        for i, t in enumerate(self.curve):
+            pts.append((self.t_to_x(t), self.lvl_to_y(i)))
+            pts.append((self.t_to_x(t), self.lvl_to_y(i + 1)))
+        pts.append((self.t_to_x(TEMP_MAX), self.lvl_to_y(3)))
+        cr.move_to(*pts[0])
+        for p in pts[1:]:
+            cr.line_to(*p)
+        cr.set_source_rgb(*FAN_COLOR)
+        cr.set_line_width(3)
+        cr.stroke()
+
+        # handles
+        for i, t in enumerate(self.curve):
+            x, y = self.t_to_x(t), (self.lvl_to_y(i) + self.lvl_to_y(i + 1)) / 2
+            cr.new_sub_path()
+            cr.arc(x, y, 9 if self.drag_idx == i else 7, 0, 2 * math.pi)
+            cr.set_source_rgb(*FAN_COLOR)
+            cr.fill_preserve()
+            cr.set_source_rgb(1, 1, 1)
+            cr.set_line_width(2)
+            cr.stroke()
+            s = f"{t}°"
+            cr.set_source_rgba(*c, 0.9)
+            cr.move_to(x + 12, y + 4)
+            cr.show_text(s)
+
+        # current temperature
+        if self.temp is not None:
+            x = self.t_to_x(max(TEMP_MIN, min(TEMP_MAX, self.temp)))
+            cr.set_source_rgb(*TEMP_COLOR)
+            cr.set_line_width(1.5)
+            cr.set_dash([4, 3])
+            cr.move_to(x, top)
+            cr.line_to(x, top + ph)
+            cr.stroke()
+            cr.set_dash([])
+            if self.level is not None:
+                cr.new_sub_path()
+                cr.arc(x, self.lvl_to_y(self.level), 5, 0, 2 * math.pi)
+                cr.fill()
+
+
+class Window(Adw.ApplicationWindow):
+    def __init__(self, app):
+        super().__init__(application=app, title="Performance Control")
+        self.set_default_size(560, 900)
+        self.syncing = False
+        self.asus = hwmon("asus")
+        self.coretemp = hwmon("coretemp")
+        self.fan_max = 6500
+
+        css = Gtk.CssProvider()
+        css.load_from_string(CSS)
+        Gtk.StyleContext.add_provider_for_display(
+            self.get_display(), css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+
+        self.toasts = Adw.ToastOverlay()
+        view = Adw.ToolbarView()
+        view.add_top_bar(Adw.HeaderBar())
+        page = Adw.PreferencesPage()
+        view.set_content(page)
+        self.toasts.set_child(view)
+        self.set_content(self.toasts)
+
+        # Gauges
+        top = Adw.PreferencesGroup()
+        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8,
+                       css_classes=["card", "gauge-card"])
+        gauges = Gtk.Box(homogeneous=True)
+        self.g_temp = Gauge("CPU temp", "°C", TEMP_MIN, TEMP_MAX)
+        self.g_fan = Gauge("Fan", "RPM", 0, self.fan_max, FAN_COLOR)
+        self.g_freq = Gauge("CPU clock", "GHz", 0, FREQ_MAX, FREQ_COLOR, "{:.1f}")
+        for g in (self.g_temp, self.g_fan, self.g_freq):
+            gauges.append(g)
+        card.append(gauges)
+        chips = Gtk.Box(spacing=6, halign=Gtk.Align.CENTER, margin_bottom=6)
+        self.c_power = Gtk.Label(css_classes=["chip"])
+        self.c_turbo = Gtk.Label(css_classes=["chip"])
+        self.c_gov = Gtk.Label(css_classes=["chip"])
+        for ch in (self.c_power, self.c_turbo, self.c_gov):
+            chips.append(ch)
+        card.append(chips)
+        top.add(card)
+        page.add(top)
+
+        # History
+        hist = Adw.PreferencesGroup(title="Live")
+        hcard = Gtk.Box(css_classes=["card"], margin_top=2)
+        self.history = History()
+        self.history.set_margin_start(6)
+        self.history.set_margin_end(6)
+        self.history.set_margin_top(6)
+        self.history.set_margin_bottom(6)
+        hcard.append(self.history)
+        hist.add(hcard)
+        page.add(hist)
+
+        # CPU controls
+        ctl = Adw.PreferencesGroup(title="CPU")
+        self.profile = self.toggle_row(
+            ctl, "Performance mode", "ASUS power limits and fan behaviour",
+            [("quiet", "Quiet"), ("balanced", "Balanced"), ("performance", "Performance")],
+            lambda v: self.run("profile", v))
+        self.profile_row = self.last_row
+        self.turbo = self.toggle_row(
+            ctl, "Turbo boost", f"Up to {FREQ_MAX} GHz · Auto lets auto-cpufreq decide",
+            [("auto", "Auto"), ("always", "On"), ("never", "Off")],
+            lambda v: self.run("turbo", v))
+        self.gov = self.toggle_row(
+            ctl, "CPU governor", "Auto lets auto-cpufreq decide",
+            [("auto", "Auto"), ("performance", "Performance"), ("powersave", "Powersave")],
+            lambda v: self.run("governor", v))
+        page.add(ctl)
+
+        # Fan controls
+        fan = Adw.PreferencesGroup(
+            title="Fan",
+            description="This laptop's firmware exposes four fan levels, not exact RPM.")
+        self.fan_mode = self.toggle_row(
+            fan, "Fan control", None,
+            [("auto", "Auto"), ("manual", "Manual"), ("curve", "Curve")],
+            self.fan_mode_changed)
+        self.fan_mode_row = self.last_row
+        self.fan_level = self.toggle_row(
+            fan, "Fan level", "Quiet and Balanced also lower CPU power",
+            [(k, n.split()[0]) for k, n in LEVELS],
+            lambda v: self.run("fanmode", v))
+        self.fan_level_row = self.last_row
+        self.curve_row = Adw.PreferencesRow(activatable=False)
+        cbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4,
+                       margin_top=10, margin_bottom=10, margin_start=10, margin_end=10)
+        self.curve_label = Gtk.Label(xalign=0, css_classes=["dim-label"], wrap=True)
+        cbox.append(self.curve_label)
+        self.curve = CurveEditor(lambda c: self.run("fancurve", *map(str, c)))
+        cbox.append(self.curve)
+        self.curve_row.set_child(cbox)
+        fan.add(self.curve_row)
+        page.add(fan)
+
+        self.sync_controls()
+        self.refresh()
+        GLib.timeout_add_seconds(1, self.refresh)
+
+    def toggle_row(self, group, title, subtitle, options, on_change):
+        row = Adw.ActionRow(title=title, subtitle=subtitle or "")
+        tg = Adw.ToggleGroup(valign=Gtk.Align.CENTER)
+        for name, label in options:
+            tg.add(Adw.Toggle(name=name, label=label))
+        tg.connect("notify::active-name",
+                   lambda t, _p: None if self.syncing else on_change(t.get_active_name()))
+        row.add_suffix(tg)
+        group.add(row)
+        self.last_row = row
+        return tg
+
+    def set_toggle(self, tg, name):
+        self.syncing = True
+        tg.set_active_name(name)
+        self.syncing = False
+
+    def fan_mode_changed(self, v):
+        if v == "manual":
+            self.run("fanmode", self.fan_level.get_active_name() or "balanced")
+        else:
+            self.run("fanmode", v)
+
+    def sync_controls(self):
+        self.set_toggle(self.profile, read(PROFILE, "balanced"))
+        self.set_toggle(self.turbo, read_pickle(TURBO_OVERRIDE, "auto"))
+        gov = read_pickle(GOV_OVERRIDE, None)
+        self.set_toggle(self.gov, gov if gov in ("performance", "powersave") else "auto")
+
+        conf = read_json(FAN_CONF, {"mode": "auto", "curve": [55, 70, 85]})
+        mode = conf.get("mode", "auto")
+        kind = "manual" if mode in dict(LEVELS) else mode
+        self.set_toggle(self.fan_mode, kind)
+        if kind == "manual":
+            self.set_toggle(self.fan_level, mode)
+        if self.curve.drag_idx is None:
+            self.curve.curve = list(conf.get("curve", [55, 70, 85]))
+        self.fan_level_row.set_visible(kind == "manual")
+        self.curve_row.set_visible(kind == "curve")
+        self.profile_row.set_sensitive(kind == "auto")
+        self.profile_row.set_subtitle(
+            "ASUS power limits and fan behaviour" if kind == "auto"
+            else "Controlled by the fan setting below")
+        installed = GLib.file_test(FAN_STATE, GLib.FileTest.EXISTS)
+        self.fan_mode_row.set_sensitive(installed)
+        self.fan_mode_row.set_subtitle("" if installed else "Fan service not installed")
+
+    def run(self, *args):
+        proc = Gio.Subprocess.new(
+            ["pkexec", HELPER, *args],
+            Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_MERGE)
+
+        def done(p, res):
+            _ok, out, _ = p.communicate_utf8_finish(res)
+            if p.get_exit_status() != 0:
+                msg = (out or "").strip().splitlines()
+                self.toasts.add_toast(Adw.Toast(
+                    title=f"Couldn't change {args[0]}: {msg[-1] if msg else 'not authorized'}"))
+            self.sync_controls()
+            self.refresh()
+
+        proc.communicate_utf8_async(None, None, done)
+
+    def refresh(self):
+        temp = None
+        if self.coretemp:
+            temp = int(read(f"{self.coretemp}/temp1_input", "0")) / 1000
+        rpm = int(read(f"{self.asus}/fan1_input", "0")) if self.asus else None
+        if rpm and rpm > self.fan_max:
+            self.fan_max = int(math.ceil(rpm * 1.15 / 500) * 500)
+            self.history.fan_max = self.fan_max
+        freqs = [int(read(p, "0")) / 1e6
+                 for p in glob.glob(f"{CPU}/cpu[0-9]*/cpufreq/scaling_cur_freq")]
+        freq = max(freqs) if freqs else None
+
+        self.g_temp.set_value(temp)
+        self.g_fan.set_value(rpm, self.fan_max)
+        self.g_freq.set_value(freq)
+        self.history.push(temp, rpm, freq)
+
+        on_ac = read("/sys/class/power_supply/AC0/online") == "1"
+        self.c_power.set_label("⚡ Plugged in" if on_ac
+                               else f"🔋 {read('/sys/class/power_supply/BAT0/capacity')}%")
+        turbo = read(f"{CPU}/intel_pstate/no_turbo") != "1"
+        self.c_turbo.set_label(f"Turbo {'on' if turbo else 'off'}")
+        self.c_turbo.set_css_classes(["chip", "on"] if turbo else ["chip"])
+        self.c_gov.set_label(read(f"{CPU}/cpufreq/policy0/scaling_governor").capitalize())
+
+        state = read_json(FAN_STATE, {})
+        self.curve.temp = temp
+        lvl = state.get("level")
+        keys = [k for k, _n in LEVELS]
+        self.curve.level = keys.index(lvl) if lvl in keys else None
+        self.curve.queue_draw()
+        if lvl:
+            self.curve_label.set_label(
+                f"Drag the points to set where the fan steps up. "
+                f"Now: {dict(LEVELS)[lvl]} at {temp:.0f} °C.")
+        else:
+            self.curve_label.set_label("Drag the points to set where the fan steps up.")
+        if self.fan_mode.get_active_name() == "auto":
+            self.set_toggle(self.profile, read(PROFILE, "balanced"))
+        return True
+
+
+class App(Adw.Application):
+    def __init__(self):
+        super().__init__(application_id="local.PerfControl")
+
+    def do_activate(self):
+        (self.props.active_window or Window(self)).present()
+
+
+if __name__ == "__main__":
+    sys.exit(App().run(sys.argv))

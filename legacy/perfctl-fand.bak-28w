@@ -1,0 +1,101 @@
+#!/usr/bin/env python3
+"""Fan level daemon: applies a fixed fan level or a temperature curve
+using the ASUS platform profile and full-speed switch."""
+import collections
+import glob
+import json
+import os
+import time
+
+CONF = "/etc/perfctl/fan.json"
+STATE = "/run/perfctl/state.json"
+PROFILE = "/sys/firmware/acpi/platform_profile"
+LEVELS = ["quiet", "balanced", "performance", "full"]
+DEFAULT = {"mode": "auto", "curve": [55, 70, 85]}
+HYSTERESIS = 5  # °C below a threshold before stepping down
+INTERVAL = 2
+
+
+def read(path, default=""):
+    try:
+        with open(path) as f:
+            return f.read().strip()
+    except OSError:
+        return default
+
+
+def write(path, value):
+    if read(path) != value:
+        with open(path, "w") as f:
+            f.write(value)
+
+
+def hwmon(name):
+    for h in glob.glob("/sys/class/hwmon/hwmon*"):
+        if read(f"{h}/name") == name:
+            return h
+    return None
+
+
+def load_conf():
+    conf = dict(DEFAULT)
+    try:
+        with open(CONF) as f:
+            conf.update(json.load(f))
+    except (OSError, ValueError):
+        pass
+    return conf
+
+
+def apply(level, asus):
+    write(PROFILE, "performance" if level == "full" else level)
+    if asus:
+        write(f"{asus}/pwm1_enable", "0" if level == "full" else "2")
+
+
+def main():
+    os.makedirs(os.path.dirname(STATE), exist_ok=True)
+    asus, coretemp = hwmon("asus"), hwmon("coretemp")
+    temps = collections.deque(maxlen=3)
+    idx, last_mode = None, None
+    while True:
+        conf = load_conf()
+        mode = conf["mode"]
+        try:
+            temps.append(int(read(f"{coretemp}/temp1_input")) / 1000)
+            temp = sum(temps) / len(temps)
+        except (ValueError, TypeError):
+            temp = None
+        level = None
+
+        if mode == "curve":
+            th = conf["curve"]
+            if temp is None:
+                idx = 3  # can't read temperature: be safe
+            else:
+                target = sum(temp >= t for t in th)
+                if idx is None or target > idx:
+                    idx = target
+                while idx > 0 and temp < th[idx - 1] - HYSTERESIS:
+                    idx -= 1
+            level = LEVELS[idx]
+        else:
+            idx = None
+            if mode in LEVELS:
+                level = mode
+
+        if level:
+            apply(level, asus)
+        elif mode == "auto" and last_mode not in (None, "auto"):
+            apply("balanced", asus)  # hand back to firmware defaults
+
+        tmp = STATE + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump({"mode": mode, "level": level, "temp": temp}, f)
+        os.replace(tmp, STATE)
+        last_mode = mode
+        time.sleep(INTERVAL)
+
+
+if __name__ == "__main__":
+    main()

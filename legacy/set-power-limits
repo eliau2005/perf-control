@@ -1,0 +1,9 @@
+#!/bin/sh
+# Set Intel RAPL package limits: PL1 (long_term) 30W, PL2 (short_term) 48W
+PL1=35000000
+PL2=48000000
+for d in /sys/class/powercap/intel-rapl:0 /sys/class/powercap/intel-rapl-mmio:0; do
+  [ -d "$d" ] || continue
+  echo "$PL1" > "$d/constraint_0_power_limit_uw"
+  echo "$PL2" > "$d/constraint_1_power_limit_uw"
+done

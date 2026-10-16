@@ -1,0 +1,9 @@
+[Unit]
+Description=Performance Control fan level daemon
+
+[Service]
+ExecStart=/usr/local/libexec/perfctl-fand
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

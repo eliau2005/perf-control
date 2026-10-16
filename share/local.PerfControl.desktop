@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=Performance Control
+Comment=CPU performance mode, turbo boost and fan control
+Exec=/usr/local/bin/perf-control
+Icon=power-profile-performance-symbolic
+Terminal=false
+Type=Application
+Categories=System;
+Keywords=cpu;fan;turbo;performance;power;

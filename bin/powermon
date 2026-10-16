@@ -1,0 +1,38 @@
+#!/bin/bash
+# Live package power / temperature / throttle monitor. Run as root:
+#   pkexec /usr/local/bin/powermon [interval_s]   (default 1)
+# Logs a CSV to /var/log/powermon-<date>.csv alongside the console view.
+I=${1:-1}
+R=/sys/class/powercap/intel-rapl:0
+M=/sys/class/powercap/intel-rapl-mmio:0
+HW=$(grep -l coretemp /sys/class/hwmon/hwmon*/name | xargs dirname)
+FAN=$(grep -l asus /sys/class/hwmon/hwmon*/name | xargs dirname)
+TT=/sys/devices/system/cpu/cpu0/thermal_throttle
+LOG=/var/log/powermon-$(date +%F-%H%M).csv
+WRAP=$(cat $R/max_energy_range_uj)
+PL1=$(( $(cat $M/constraint_0_power_limit_uw) / 1000000 ))
+PL2=$(( $(cat $M/constraint_1_power_limit_uw) / 1000000 ))
+TCC=$(( 100 - $(grep -l 'TCC Offset' /sys/class/thermal/cooling_device*/type | xargs dirname | xargs -I{} cat {}/cur_state) ))
+
+echo "time,pkg_w,peak_w,pkg_c,hot_c,mhz,fan_rpm,profile,core_thr,pkg_thr,daemon" > "$LOG"
+echo "PL1=${PL1}W PL2=${PL2}W  throttle at ~${TCC}°C  log: $LOG"
+printf "%-8s %6s %6s %5s %5s %5s %5s %-11s %5s %5s %s\n" \
+  TIME PKG_W PEAK_W PKG°C HOT°C MHz FAN PROFILE CTHR PTHR DAEMON
+e0=$(cat $R/energy_uj); t0=$(date +%s%N)
+c0=$(cat $TT/core_throttle_count); p0=$(cat $TT/package_throttle_count)
+peak=0
+while sleep "$I"; do
+  e1=$(cat $R/energy_uj); t1=$(date +%s%N)
+  w=$(awk -v d=$(( (e1 - e0 + WRAP) % WRAP )) -v t=$(( t1 - t0 )) 'BEGIN{printf "%.1f", d*1000/t}')
+  peak=$(awk -v a=$w -v b=$peak 'BEGIN{print (a>b)?a:b}')
+  pkg=$(( $(cat $HW/temp1_input) / 1000 ))
+  hot=$(( $(cat $HW/temp*_input | sort -n | tail -1) / 1000 ))
+  mhz=$(awk '/MHz/{s+=$4;n++} END{printf "%d", s/n}' /proc/cpuinfo)
+  c1=$(cat $TT/core_throttle_count); p1=$(cat $TT/package_throttle_count)
+  d=$(python3 -c 'import json;s=json.load(open("/run/perfctl/state.json"));print(s.get("level"),s.get("reason") or "",sep="/")' 2>/dev/null)
+  ts=$(date +%T)
+  printf "%-8s %6s %6s %5s %5s %5s %5s %-11s %5s %5s %s\n" "$ts" "$w" "$peak" "$pkg" "$hot" "$mhz" \
+    "$(cat $FAN/fan1_input)" "$(cat /sys/firmware/acpi/platform_profile)" "+$((c1-c0))" "+$((p1-p0))" "$d"
+  echo "$ts,$w,$peak,$pkg,$hot,$mhz,$(cat $FAN/fan1_input),$(cat /sys/firmware/acpi/platform_profile),$((c1-c0)),$((p1-p0)),$d" >> "$LOG"
+  e0=$e1; t0=$t1; c0=$c1; p0=$p1
+done

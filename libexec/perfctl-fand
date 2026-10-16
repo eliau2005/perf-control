@@ -1,0 +1,173 @@
+#!/usr/bin/env python3
+"""Fan level daemon: applies a fixed fan level or a temperature curve
+using the ASUS platform profile and full-speed switch.
+
+Curve mode also uses package power (RAPL) as a feed-forward floor, so the
+fan ramps when a sustained 28 W load starts rather than after the heat
+soaks in, plus an emergency override and a hold after thermal throttling."""
+import collections
+import glob
+import json
+import os
+import time
+
+CONF = "/etc/perfctl/fan.json"
+STATE = "/run/perfctl/state.json"
+PROFILE = "/sys/firmware/acpi/platform_profile"
+RAPL = "/sys/class/powercap/intel-rapl:0"
+THROTTLE = "/sys/devices/system/cpu/cpu0/thermal_throttle/package_throttle_count"
+LEVELS = ["quiet", "balanced", "performance", "full"]
+DEFAULT = {
+    "mode": "auto",
+    "curve": [55, 68, 78],   # °C, smoothed package temp
+    "power": [12, 20, 26],   # W, smoothed package power floors
+    "emergency": 88,         # °C, hottest sensor; TCC throttles at ~92
+}
+HYSTERESIS = 5     # °C below a threshold before stepping down
+POWER_HYST = 3     # W below a power floor before it releases
+DWELL = 20         # s at a level before stepping down one
+THROTTLE_HOLD = 60 # s at full after a package throttle event
+INTERVAL = 2
+POWER_ALPHA = 0.35 # EMA weight; ~5 s time constant at 2 s ticks
+
+
+def read(path, default=""):
+    try:
+        with open(path) as f:
+            return f.read().strip()
+    except OSError:
+        return default
+
+
+def read_int(path):
+    try:
+        return int(read(path))
+    except ValueError:
+        return None
+
+
+def write(path, value):
+    if read(path) != value:
+        with open(path, "w") as f:
+            f.write(value)
+
+
+def hwmon(name):
+    for h in glob.glob("/sys/class/hwmon/hwmon*"):
+        if read(f"{h}/name") == name:
+            return h
+    return None
+
+
+def load_conf():
+    conf = dict(DEFAULT)
+    try:
+        with open(CONF) as f:
+            conf.update(json.load(f))
+    except (OSError, ValueError):
+        pass
+    return conf
+
+
+def apply(level, asus):
+    write(PROFILE, "performance" if level == "full" else level)
+    if asus:
+        write(f"{asus}/pwm1_enable", "0" if level == "full" else "2")
+
+
+class Power:
+    """Smoothed package power from the RAPL energy counter."""
+
+    def __init__(self):
+        self.wrap = read_int(f"{RAPL}/max_energy_range_uj") or 2**32
+        self.last = None
+        self.watts = None
+
+    def sample(self):
+        e, t = read_int(f"{RAPL}/energy_uj"), time.monotonic()
+        if e is None:
+            return self.watts
+        if self.last:
+            de = (e - self.last[0]) % self.wrap
+            w = de / 1e6 / (t - self.last[1])
+            self.watts = w if self.watts is None else (
+                POWER_ALPHA * w + (1 - POWER_ALPHA) * self.watts)
+        self.last = (e, t)
+        return self.watts
+
+
+def main():
+    os.makedirs(os.path.dirname(STATE), exist_ok=True)
+    asus, coretemp = hwmon("asus"), hwmon("coretemp")
+    sensors = sorted(glob.glob(f"{coretemp}/temp*_input")) if coretemp else []
+    temps = collections.deque(maxlen=3)
+    power = Power()
+    idx, last_mode, changed = None, None, 0.0
+    throttles, hold_until = read_int(THROTTLE), 0.0
+    while True:
+        conf = load_conf()
+        mode = conf["mode"]
+        now = time.monotonic()
+        readings = [v for v in map(read_int, sensors) if v is not None]
+        hottest = max(readings) / 1000 if readings else None
+        pkg = read_int(f"{coretemp}/temp1_input") if coretemp else None
+        if pkg is not None:
+            temps.append(pkg / 1000)
+        temp = sum(temps) / len(temps) if temps else None
+        watts = power.sample()
+
+        count = read_int(THROTTLE)
+        throttled = count is not None and throttles is not None and count > throttles
+        throttles = count
+        if throttled:
+            hold_until = now + THROTTLE_HOLD
+
+        level, reason = None, None
+        if mode == "curve":
+            th, pw = conf["curve"], conf["power"]
+            if temp is None or hottest is None:
+                target, reason = 3, "no-sensor"
+            elif hottest >= conf["emergency"]:
+                target, reason = 3, "emergency"
+            elif now < hold_until:
+                target, reason = 3, "throttle-hold"
+            else:
+                t_idx = sum(temp >= t for t in th)
+                p_idx = sum(watts >= p for p in pw) if watts is not None else 0
+                target = max(t_idx, p_idx)
+                reason = "power" if p_idx > t_idx else "temp"
+
+            if idx is None or target > idx:
+                idx, changed = target, now
+            elif target < idx and reason in ("temp", "power") \
+                    and now - changed >= DWELL:
+                # Step down one level only once both temperature and power
+                # have cleared that level's threshold by their hysteresis.
+                cool = temp < th[idx - 1] - HYSTERESIS
+                idle = watts is None or watts < pw[idx - 1] - POWER_HYST
+                if cool and idle:
+                    idx, changed = idx - 1, now
+            level = LEVELS[idx]
+        else:
+            idx = None
+            if mode in LEVELS:
+                level = mode
+
+        if level:
+            apply(level, asus)
+        elif mode == "auto" and last_mode not in (None, "auto"):
+            apply("balanced", asus)  # hand back to firmware defaults
+
+        tmp = STATE + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump({"mode": mode, "level": level, "temp": temp,
+                       "hottest": hottest,
+                       "power": round(watts, 1) if watts is not None else None,
+                       "throttled": now < hold_until, "reason": reason}, f)
+        os.replace(tmp, STATE)
+        last_mode = mode
+        time.sleep(INTERVAL)
+
+
+if __name__ == "__main__":
+    main()

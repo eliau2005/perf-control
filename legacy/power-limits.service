@@ -1,0 +1,10 @@
+[Unit]
+Description=Set CPU power limits (PL1 35W, PL2 48W)
+After=thermald.service suspend.target hibernate.target hybrid-sleep.target suspend-then-hibernate.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/set-power-limits
+
+[Install]
+WantedBy=multi-user.target suspend.target hibernate.target hybrid-sleep.target suspend-then-hibernate.target
