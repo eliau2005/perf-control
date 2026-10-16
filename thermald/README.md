@@ -52,6 +52,23 @@ pointing at ours. When a distro version ≥ the upstream fix lands, revert with:
 pkexec sh -c 'rm -r /etc/systemd/system/thermald.service.d && systemctl daemon-reload && systemctl restart thermald'
 ```
 
+## Optional policy override (package‑temperature backstop)
+
+ASUS's PSVTs only act on SEN1 (stuck at 63 °C on Linux); CPU temperature is
+left to the TCC trip, so sustained loads sit at 92/95 °C with thousands of
+thermal‑trip events. `tools/gddv_patch.py` adds a `TCPU → TCPU` row (default
+89 °C, 500 mW steps, 2 s) to every PSVT; thermald ≥ 2.5.12 loads the result from
+`/lib/firmware/intel/dtt/dtt_data_vault_<crc32s>.bin` when
+`<DataVaultFromFileSystem>1` is set in `/etc/thermald/thermald-features.xml`.
+
+```sh
+pkexec ./vault-override.sh install ../research/gddv/x1402_p28_0322-cool89.bin
+pkexec ./vault-override.sh remove        # back to the firmware vault
+```
+
+Trade‑off: fewer/no TM events and ~3 °C headroom for a few W less sustained;
+deviates from the stock ASUS policy. Measure before adopting.
+
 ## Verify
 
 ```sh
