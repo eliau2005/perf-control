@@ -1,0 +1,1 @@
+config: B5 = B3 but platform_profile=performance (odvp0=2 -> DTT target 62 Performance: PL1 35-38 W, PL2 45 W, TCC 5 -> 95 C; EC Performance fan table). auto-cpufreq active turbo=always. Monitor ran unprivileged: no package power / limit reasons / turbostat. kernel=7.0.0-38-generic date=2026-10-17T02:27:11+03:00

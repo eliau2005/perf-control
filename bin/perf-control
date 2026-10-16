@@ -240,7 +240,8 @@ class Window(Adw.ApplicationWindow):
             gauges.append(g)
         card.append(gauges)
         self.chips = {}
-        for row_names in (("power", "turbo", "gov"), ("limits", "target"), ("engine", "throttle")):
+        for row_names in (("power", "turbo", "gov"), ("limits", "tcc", "sensors"),
+                          ("target", "engine"), ("trips", "throttle")):
             box = Gtk.Box(spacing=6, halign=Gtk.Align.CENTER, margin_bottom=6)
             for n in row_names:
                 self.chips[n] = Gtk.Label(css_classes=["chip"])
@@ -375,12 +376,19 @@ class Window(Adw.ApplicationWindow):
         self.chip("gov", f"{read(f'{CPU}/cpufreq/policy0/scaling_governor').capitalize()} · EPP "
                          f"{read(f'{CPU}/cpufreq/policy0/energy_performance_preference').replace('_', ' ')}")
         self.chip("limits", f"PL1 {pl1} W · PL2 {pl2} W")
-        tgt, pol, skin = state.get("target"), state.get("policy", {}), state.get("skin")
+        tgt, pol, skin, sen2 = (state.get("target"), state.get("policy", {}),
+                                state.get("skin"), state.get("sen2"))
+        tcc = state.get("tcc")
+        self.chip("tcc", f"TCC −{tcc} → {100 - tcc} °C" if tcc is not None else "TCC –")
+        self.chip("sensors", "SEN1 " + (f"{skin:.0f}" if skin is not None else "–")
+                  + " · SEN2 " + (f"{sen2:.0f}" if sen2 is not None else "–") + " °C")
         if tgt:
             self.chip("target", f"DTT {tgt.replace('_', ' ')} · PL1 {pol.get('pl1_min')}–{pol.get('pl1_max')} W"
-                                + (f" · skin {skin:.0f} °C" if skin is not None else ""), True)
+                                f" · PL2 {pol.get('pl2')} W", True)
         else:
             self.chip("target", "State daemon not running", False)
+        cnt = state.get("throttle_count")
+        self.chip("trips", f"Thermal trips {cnt:,}" if cnt is not None else "Thermal trips –")
         thermald = self.name_has_owner("org.freedesktop.thermald")
         self.chip("engine", "Policy: thermald (ASUS DTT)" if thermald else "Policy: none — firmware defaults",
                   thermald)

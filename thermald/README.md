@@ -7,9 +7,20 @@ same bug. We run upstream master plus a one-hunk fix to `parse_itmt()`.
 ## Source
 
 `~/GitHub/thermal_daemon` — clone of https://github.com/intel/thermal_daemon,
-branch `asus-itmt-v1` on top of master (v2.5.13-2-g39f4bdb). The fix:
-`src/thd_gddv.cpp`, `cthd_gddv::parse_itmt()` — only read the trailing
-`unused` string of a version‑1 entry when it is present.
+branch `asus-itmt-v1` on top of master (v2.5.13-2-g39f4bdb). Two fixes:
+
+1. `src/thd_gddv.cpp`, `cthd_gddv::parse_itmt()` — only read the trailing
+   `unused` string of a version‑1 entry when it is present (the parse failure).
+2. `src/thd_cdev_rapl.cpp`, `set_adaptive_target()` — when the RAPL device is
+   not throttling, write PL1 = PL1MAX; treat `curr_state == 0` as unset in
+   PL1MIN. Without this, thermald left the **MSR** PL1 at the ACPI PPCC max
+   (15 W on this firmware) because its "park MSR at 200 W" path only lowers,
+   so the package ran at 14 W after the PL2 window; and every target switch
+   first wrote PL1MIN, then crept up 0.5 W per 4 s poll.
+
+Verified 2026-10-17 (`results/thermald-b3-switch.log`): MSR PL1 200 W, MMIO
+38/45 W, TCC 8 in Standard; quiet → "Condition Set matched:3 target:59"
+(Whisper), performance → set 4 / target 62, balanced → set 5 / target 65.
 
 ## Build
 

@@ -56,7 +56,17 @@ def read_msr(cpu, reg):
         return None
 
 
+class NoProc:
+    """Stand-in when turbostat can't run (not root)."""
+    def poll(self): return 0
+    def terminate(self): pass
+    def wait(self, *_): pass
+    def kill(self): pass
+
+
 def start_turbostat():
+    if os.geteuid() != 0:
+        return NoProc()
     try:
         avail = subprocess.run(["turbostat", "--list"], capture_output=True, text=True,
                                timeout=10).stdout
@@ -77,7 +87,10 @@ def start_turbostat():
 
 def main():
     os.makedirs(OUT, exist_ok=True)
-    subprocess.call(["modprobe", "msr"], stderr=subprocess.DEVNULL)
+    if os.geteuid() == 0:
+        subprocess.call(["modprobe", "msr"], stderr=subprocess.DEVNULL)
+    else:
+        print("not root: no package power, MSR limit reasons or turbostat", file=sys.stderr)
     coretemp, asus = hwmon("coretemp"), hwmon("asus")
     core_temps = sorted(glob.glob(f"{coretemp}/temp*_input")) if coretemp else []
     zones = {read(f"{z}/type"): z for z in glob.glob("/sys/class/thermal/thermal_zone*")}

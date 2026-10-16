@@ -83,7 +83,7 @@ class Power:
 
 def main():
     os.makedirs(os.path.dirname(STATE), exist_ok=True)
-    sen1 = zone("SEN1")
+    sen1, sen2 = zone("SEN1"), zone("SEN2")
     power = Power()
     throttles, last_throttle = read_int(THROTTLE), 0.0
     while True:
@@ -91,6 +91,7 @@ def main():
         watts = power.sample()
         skin = read_int(f"{sen1}/temp") if sen1 else None
         skin = skin / 1000 if skin is not None else None
+        remote = read_int(f"{sen2}/temp") if sen2 else None
         count = read_int(THROTTLE)
         if count is not None and throttles is not None and count > throttles:
             last_throttle = now
@@ -104,6 +105,7 @@ def main():
             "pl2": (read_int(f"{MMIO}/constraint_1_power_limit_uw") or 0) / 1e6,
             "tcc": read_int(TCC),
             "skin": skin,
+            "sen2": remote / 1000 if remote is not None else None,
             "odvp0": odvp0,
             "target": name,
             "policy": {"pl1_min": pl1_lo, "pl1_max": pl1_hi, "pl2": pl2, "tcc": tcc},

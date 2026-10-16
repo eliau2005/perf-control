@@ -66,6 +66,19 @@ limit/unlimit coefficients):
 
 `/participants/IETM.D0/psvt` (the firmware default) equals `s1_ts0_63`.
 
+## Sensors on Linux (measured 2026-10-17, `results/*/monitor.csv`)
+
+| zone | _STR | behaviour |
+|------|------|-----------|
+| SEN1 | TS0 Local Participant | **constant 63.05 °C** (= 3362 dK, exactly the Standard trip) at 44 °C idle and 93 °C load — EC returns a placeholder via `REBS(0x17, idx 0)`. Policy therefore always lands in *Standard* (never Standard_Turbo), Whisper throttles to its 15 W floor, HOT never triggers. |
+| SEN2 | TS0 Remote Participant | live: 45–56 °C idle, 45 → 76 °C over a 10‑min 35 W load, 76 → 53 °C in a 2‑min cooldown. Slow and below package, but too hot to be skin (VRM/heatpipe area). Mapping SEN1's 63/80 °C conditions onto it would throttle PL1 toward 28 W. Not used. |
+| SEN3/4/5 | TS1 Local/Remote, Thermistor Memory | 0.05 °C — unpopulated |
+| SEN6/7/8 | Thermistor Memory | 42/38/37 idle → 59/46/43 °C under load; SEN6 is in the policy (85 °C → TCPU), never reached |
+
+thermald's adaptive engine disables the XML parser (`parser_disabled = true`),
+so a virtual-sensor override from `thermal-conf.xml` is not available in
+adaptive mode; remapping would need a thermald change.
+
 Other keys: `TCPU.D0/ppcc` = PL1 10–15 W (28–32 s), PL2 8–115 W, PL4 215 W —
 the DTT "PPCC" override, overridden in turn by the APAT PL1MIN/PL1MAX targets.
 ACPI `PPCC` method (what the kernel shows in

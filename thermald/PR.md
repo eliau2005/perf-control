@@ -53,3 +53,19 @@ applies PL1MIN/PL1MAX/PL2PowerLimit/TccOffset and the mode's PSVT.
 
 **Attach:** `research/gddv/x1402_p28_0322.bin` (3246 B) as evidence; mention
 `tools/gddv_dump.py` output if useful.
+
+---
+
+# Second commit (same PR or a follow-up): cdev_rapl PL1MAX/PL1MIN
+
+With parsing fixed, the adaptive engine on this machine still ran the
+package at 14 W: the ACPI PPCC reports PL1 0.125–15 W, `update()` writes that
+maximum to *both* RAPL devices, and `set_adaptive_target("PL1MAX")` only ever
+lowers PL1 — so the "Disable rapl-msr interface and use rapl-mmio"
+PL1MAX=200000 call wrote nothing and the MSR stayed at 15 W (the effective
+limit is min(MSR, MMIO)). PL1MIN had the mirror problem: `curr_state` is 0 at
+startup, which compares "below" the floor, so each target switch first wrote
+PL1MIN and the zones then crept up 0.5 W per poll. Commit message in
+`~/GitHub/thermal_daemon` (`git log asus-itmt-v1`) has the full write-up;
+evidence: `results/thermald-b3-start.log` (before) and
+`results/thermald-b3-switch.log` (after).
