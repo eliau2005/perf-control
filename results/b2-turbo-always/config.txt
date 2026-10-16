@@ -1,0 +1,1 @@
+config: B2 = baseline + auto-cpufreq --turbo=always (no_turbo pinned 0). platform_profile=performance fan.json={"mode": "curve", "curve": [50, 60, 63]} auto-cpufreq=active override=performance turbo-override=always thermald=distro 2.5.11 (GDDV failing) power-limits.service=35/48W kernel=7.0.0-38-generic date=2026-10-17T01:35:43+03:00

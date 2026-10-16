@@ -1,0 +1,1 @@
+config: platform_profile=performance fan.json={"mode": "curve", "curve": [50, 60, 63]} auto-cpufreq=active override=performance thermald=active power-limits.service=35/48W kernel=7.0.0-38-generic date=2026-10-17T01:09:00+03:00

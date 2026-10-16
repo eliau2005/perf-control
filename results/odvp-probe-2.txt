@@ -1,0 +1,7 @@
+apt rc=0
+initial(performance) ttp=1 odvp0=2 odvp1=0 mmio PL1/PL2=35/48 W  msr PL1/PL2=64/48 W  tcc=8  fan=5500 rpm  pwm1_enable=0
+quiet        ttp=2 odvp0=1 odvp1=0 mmio PL1/PL2=35/48 W  msr PL1/PL2=64/48 W  tcc=8  fan=5500 rpm  pwm1_enable=0
+balanced     ttp=0 odvp0=0 odvp1=0 mmio PL1/PL2=35/48 W  msr PL1/PL2=64/48 W  tcc=8  fan=5200 rpm  pwm1_enable=0
+performance  ttp=1 odvp0=2 odvp1=0 mmio PL1/PL2=35/48 W  msr PL1/PL2=64/48 W  tcc=8  fan=3900 rpm  pwm1_enable=0
+restored     ttp=1 odvp0=2 odvp1=0 mmio PL1/PL2=35/48 W  msr PL1/PL2=64/48 W  tcc=8  fan=2800 rpm  pwm1_enable=0
+fand=active profile=performance

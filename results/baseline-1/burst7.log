@@ -1,0 +1,11 @@
+stress-ng: info:  [994343] setting to a 8 secs run per stressor
+stress-ng: info:  [994343] dispatching hogs: 16 cpu
+stress-ng: info:  [994343] note: turbo is disabled and this may impact top performance; setting /sys/devices/system/cpu/intel_pstate/no_turbo to 0 may improve performance.
+stress-ng: metrc: [994343] stressor       bogo ops real time  usr time  sys time   bogo ops/s     bogo ops/s
+stress-ng: metrc: [994343]                           (secs)    (secs)    (secs)   (real time) (usr+sys time)
+stress-ng: metrc: [994343] cpu              122723      8.00    121.68      0.08     15339.26        1007.87
+stress-ng: info:  [994343] skipped: 0
+stress-ng: info:  [994343] passed: 16: cpu (16)
+stress-ng: info:  [994343] failed: 0
+stress-ng: info:  [994343] metrics untrustworthy: 0
+stress-ng: info:  [994343] successful run completed in 8.01 secs
