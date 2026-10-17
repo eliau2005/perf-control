@@ -20,7 +20,8 @@ if ! "$P/thermald/vault-override.sh" install "$P/research/gddv/x1402_p28_0322-co
 fi
 cat "$R/vault-override-install.log"
 sleep 10
-mkdir -p "$OUT"
+# the workloads run unprivileged and write into OUT: it must belong to the repo owner, not root
+install -d -o "$(stat -c %u "$R")" -g "$(stat -c %g "$R")" "$OUT"
 echo "config: B6 = B4 + override vault (TCPU->TCPU 89 C passive row, 500 mW / 2 s, in every PSVT), ppd balanced -> ASUS Standard, thermald adaptive. date=$(date -Is)" > "$OUT/config.txt"
 log "step 2: monitor $NAME"; "$P/bench/start-monitor.sh" "$OUT" 1250 | tail -1
 wait_done "$OUT"; sleep 20

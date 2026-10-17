@@ -1,0 +1,1 @@
+config: (workloads could not write: root-owned dir; idle only) B6 = B4 + override vault (TCPU->TCPU 89 C passive row, 500 mW / 2 s, in every PSVT), ppd balanced -> ASUS Standard, thermald adaptive. date=2026-10-17T14:47:33+03:00

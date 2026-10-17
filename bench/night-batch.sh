@@ -24,7 +24,7 @@ for prof in power-saver balanced performance; do
 done | tee "$R/ppd-mapping.txt"
 powerprofilesctl set balanced; sleep 8
 
-OUT=$R/b4-ppd-standard; mkdir -p "$OUT"
+OUT=$R/b4-ppd-standard; install -d -o "$(stat -c %u "$R")" -g "$(stat -c %g "$R")" "$OUT"   # user-side workloads write here
 echo "config: B4 = B3 + auto-cpufreq removed, power-profiles-daemon balanced (owns platform_profile/EPP), new app + perfctld installed, legacy units removed. ASUS Standard via patched thermald. date=$(date -Is)" > "$OUT/config.txt"
 log "step 2: monitor B4"; "$P/bench/start-monitor.sh" "$OUT" 1250 | tail -1
 wait_done "$OUT"; sleep 20
@@ -32,7 +32,7 @@ wait_done "$OUT"; sleep 20
 log "step 3: override vault + monitor B6"
 "$P/thermald/vault-override.sh" install "$P/research/gddv/x1402_p28_0322-cool89.bin" > "$R/vault-override-install.log" 2>&1; cat "$R/vault-override-install.log"
 sleep 10
-OUT=$R/b6-override-cool89; mkdir -p "$OUT"
+OUT=$R/b6-override-cool89; install -d -o "$(stat -c %u "$R")" -g "$(stat -c %g "$R")" "$OUT"
 echo "config: B6 = B4 + override vault (TCPU->TCPU 89 C passive row in every PSVT), ppd balanced -> ASUS Standard. date=$(date -Is)" > "$OUT/config.txt"
 "$P/bench/start-monitor.sh" "$OUT" 1250 | tail -1
 wait_done "$OUT"; sleep 20
