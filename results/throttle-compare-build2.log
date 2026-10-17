@@ -1,0 +1,9 @@
+[19:04:22] == performance: V8 d8 clean build
+[19:16:25] cool-down timeout, pkg 56 C
+[19:16:35] idle_start
+[19:17:05] idle_end
+[19:17:05] build_start
+[19:44:14] build_end
+[19:44:14] done
+[19:44:18] throttle comparison finished
+exit=0

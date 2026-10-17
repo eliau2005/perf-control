@@ -108,6 +108,52 @@ field), `b6b-override-idle-only` (root‑owned results dir, workloads could not
 write), then the real run at 15:36. Both failure modes are fixed in the scripts.
 Nothing is queued any more.
 
+## Throttle comparison, 17:23–19:44 (`bench/throttle-compare.sh`, `results/throttle-report.md`)
+
+Measurement only, stock ASUS policy, profile switched via ppd. Cool‑down to idle
+between runs. Baseline column = `results/baseline-1` (static 35 W PL1, fan forced
+to 5 500 rpm, auto‑cpufreq, broken thermald).
+
+| 10‑min all‑core matrixprod | baseline | Standard | Performance |
+|---|---|---|---|
+| package / core(all) throttle events | 5 928 / 1 572¹ | 152 979 / 333 578 | 97 775 / 200 700 |
+| % time thermal / PL1 / PL2 limited | 3 / 88 / 4 | 98 / 0 / 2 | 30 / 81 / 3 |
+| PkgWatt / PkgTmp / Bzy_MHz (min 3–10) | 35.0 / 84.8 / 2 706 | 34.1 / 91.9 / 2 621 | 37.8 / 93.8 (max 97) / 2 754 |
+| bogo‑ops/s | 14 082 | 14 793 (+5.0 %) | 15 458 (+9.8 %) |
+| fan rpm | 5 500 | 3 949 | 4 902 |
+
+¹ cpu0 only (the baseline monitor did not sum cores).
+
+| clean V8 d8 build, ninja ‑j16, 2 499 edges | Standard | Performance |
+|---|---|---|
+| wall time | 27:03 | 27:09 |
+| package / core(all) throttle events | 418 217 / 976 352 | 34 156 / 76 658 |
+| % time thermal / PL1 limited | 99 / 0 | 10 / 91 |
+| PkgWatt / PkgTmp avg (max) / Bzy_MHz | 33.5 / 91.6 (93) / 2 518 | 34.7 / 91.4 (100) / 2 602 |
+| fan rpm | 3 936 | 4 690 |
+
+Conclusions:
+- **Throttle events did not fall against the baseline; they rose 25×.** The
+  baseline was PL1‑bound at a static 35 W with the fan at full speed, so it ran
+  7 °C cooler and barely touched the TCC trip. ASUS's Standard policy sets PL1
+  38 W, which the EC's Standard fan curve cannot remove, so the package rides the
+  TCC trip 98 % of the time (TM clock modulation ≈ 15–19 k package events per
+  minute, flat for the whole run). That is the firmware's intended control
+  loop — same throughput as baseline +5 %, at 1 500 rpm less fan — but "fewer
+  throttle events" is not something the stock policy delivers in this chassis.
+- **Performance changes the limiter from thermal to PL1**: 36 % fewer trip
+  events in the stress run (decaying from 15 k to 4 k/min as the fan ramps), 92 %
+  fewer during the build, package PL1‑bound 81–91 % of the time. Sustained
+  compute gains +4.5 % over Standard (+9.8 % over baseline) at 93.8 °C and
+  4 900 rpm.
+- **For builds Performance buys nothing**: 27:03 vs 27:09. The extra 3 % clock
+  does not reach wall time because a V8 build is not uniformly compute‑bound
+  (link, actions, dependency stalls), and both modes share PL1 38 W. It does run
+  with far fewer trips, but it also spiked to 100 °C once (TjMax) during the
+  Performance build, versus 93 °C in Standard.
+- **Verdict**: Standard for everyday use and builds; Performance only for long
+  purely compute‑bound runs where +4–5 % matters more than the fan.
+
 ## Current system state
 
 - thermald: `/usr/local/sbin/thermald --adaptive` (patched), firmware vault,

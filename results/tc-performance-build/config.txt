@@ -1,0 +1,1 @@
+config: throttle comparison, performance (ppd performance), clean V8 build: gn clean + ninja -j16 d8 in /home/user/GitHub/v8-root/v8/out/x64.release (a8260afcc21). date=2026-10-17T19:16:25+03:00

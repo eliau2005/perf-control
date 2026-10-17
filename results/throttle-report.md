@@ -41,15 +41,16 @@ Per-minute throttle events (package / core-all):
 ## Clean V8 build
 
 - **tc-standard-build**: config: throttle comparison, standard (ppd balanced), clean V8 build: gn clean + ninja -j16 d8 in /home/user/GitHub/v8-root/v8/out/x64.release (a8260afcc21). date=2026-10-17T18:21:54+03:00
+- **tc-performance-build**: config: throttle comparison, performance (ppd performance), clean V8 build: gn clean + ninja -j16 d8 in /home/user/GitHub/v8-root/v8/out/x64.release (a8260afcc21). date=2026-10-17T19:16:25+03:00
 
-| metric | tc-standard-build |
-|---|---|
-| wall time | 27.1 min (mm:ss or m:ss): 27:02.99, rc 0) |
-| package throttle events (Δ) | 418,217 |
-| core throttle events, all cores (Δ) | 976,352 |
-| % time thermal / PL1 / PL2 / none | 99 / 0 / 1 / 0 |
-| PkgWatt (RAPL / turbostat) | 33.5 / 33.5 |
-| PkgTmp °C avg (max) | 91.6 (93) |
-| Bzy_MHz / avg MHz | 2,518 / 2,512 |
-| fan rpm | 3,936 |
+| metric | tc-standard-build | tc-performance-build |
+|---|---|---|
+| wall time | 27.1 min (mm:ss or m:ss): 27:02.99, rc 0) | 27.1 min (mm:ss or m:ss): 27:08.52, rc 0) |
+| package throttle events (Δ) | 418,217 | 34,156 |
+| core throttle events, all cores (Δ) | 976,352 | 76,658 |
+| % time thermal / PL1 / PL2 / none | 99 / 0 / 1 / 0 | 10 / 91 / 1 / 0 |
+| PkgWatt (RAPL / turbostat) | 33.5 / 33.5 | 34.7 / 34.7 |
+| PkgTmp °C avg (max) | 91.6 (93) | 91.4 (100) |
+| Bzy_MHz / avg MHz | 2,518 / 2,512 | 2,602 / 2,595 |
+| fan rpm | 3,936 | 4,690 |
 
