@@ -55,7 +55,16 @@ systemctl daemon-reload && systemctl enable --now perfctl-fand
 What changed: B2 set `--turbo=always` (pickle `/opt/auto-cpufreq/turbo-override.pickle`);
 B4 runs `auto-cpufreq --remove` (stops/disables the unit, removes
 `/usr/local/bin/cpufreqctl.auto-cpufreq`, deletes `override.pickle`, unmasks
-and starts power‑profiles‑daemon). The venv in `/opt/auto-cpufreq` is kept.
+and starts power‑profiles‑daemon). 2026‑10‑17 17:40: the GTK launcher
+`/usr/local/bin/auto-cpufreq-gtk` and `/usr/share/applications/auto-cpufreq-gtk.desktop`
+were deleted so it cannot be opened by accident. Kept on purpose until ~2026‑10‑31
+(two weeks of stable operation): the venv `/opt/auto-cpufreq`, the CLI
+`/usr/local/bin/auto-cpufreq` + `auto-cpufreq-install`, `/usr/local/share/auto-cpufreq`
+and the polkit policy `/usr/share/polkit-1/actions/org.auto-cpufreq.pkexec.policy`.
+Final purge when the time comes:
+```sh
+pkexec rm -rf /opt/auto-cpufreq /usr/local/share/auto-cpufreq /usr/local/bin/auto-cpufreq /usr/local/bin/auto-cpufreq-install /usr/share/polkit-1/actions/org.auto-cpufreq.pkexec.policy
+```
 
 Undo turbo pin only: `/usr/local/bin/auto-cpufreq --turbo=auto`.
 

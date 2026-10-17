@@ -71,7 +71,7 @@ limit/unlimit coefficients):
 | zone | _STR | behaviour |
 |------|------|-----------|
 | SEN1 | TS0 Local Participant | **constant 63.05 °C** (= 3362 dK, exactly the Standard trip) at 44 °C idle and 93 °C load — EC returns a placeholder via `REBS(0x17, idx 0)`. Policy therefore always lands in *Standard* (never Standard_Turbo), Whisper throttles to its 15 W floor, HOT never triggers. |
-| SEN2 | TS0 Remote Participant | live: 45–56 °C idle, 45 → 76 °C over a 10‑min 35 W load, 76 → 53 °C in a 2‑min cooldown. Slow and below package, but too hot to be skin (VRM/heatpipe area). Mapping SEN1's 63/80 °C conditions onto it would throttle PL1 toward 28 W. Not used. |
+| SEN2 | TS0 Remote Participant | live: 45–57 °C idle, max 76 / 81 / 83 °C in baseline / B4 Standard / B5 Performance. Not skin‑like: tracks package temperature with a 5 s lag (r = 0.87), +24 °C in the first 60 s of load, crosses 63 °C after 8 s and 80 °C after 48–157 s, cools 15 °C in 30 s. A chassis‑skin sensor has minute‑scale dynamics and never nears 80 °C — this is a heatsink/VRM thermistor. Replaying SEN1's conditions on the recorded SEN2 traces: Standard_Turbo (PL1 45 W) only for the first ~8 s (no gain: bursts are already PL2‑bound at 45 W), then Standard with the 63 °C PSVT pushing PL1 toward 28 W, then **HOT** (PL1 10–15 W, TCC 30 → 70 °C trip) after 1–3 min of sustained load. Strictly worse than today; not mapped. |
 | SEN3/4/5 | TS1 Local/Remote, Thermistor Memory | 0.05 °C — unpopulated |
 | SEN6/7/8 | Thermistor Memory | 42/38/37 idle → 59/46/43 °C under load; SEN6 is in the policy (85 °C → TCPU), never reached |
 
