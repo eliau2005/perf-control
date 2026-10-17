@@ -118,12 +118,22 @@ Nothing is queued any more.
 - `perfctld` active (`/run/perfctl/state.json`), new `perf-control` UI running.
 - Rollback for each piece: `docs/ROLLBACK.md`.
 
+## Transitions (`bench/transition-check.sh`, 16:55–17:02)
+
+- **Suspend/resume** (`results/suspend-1`): two s2idle cycles (16:56:59→16:57:19,
+  16:57:19→16:57:40). Before and after: profile balanced, MMIO PL1/PL2 38/45 W,
+  MSR PL1 parked at 200 W, TCC 8, `no_turbo` 0, EPP balance_performance — the
+  limits survive s2idle on this platform, thermald kept polling (Standard target,
+  no re‑init needed), `perfctld` state live after resume.
+- **AC↔battery** (`results/battery-1`): unplug at 16:59:23 → ppd switched EPP to
+  `balance_power` within one sample; PL1/PL2/TCC and the DTT target unchanged
+  (the ASUS APCT has no power‑source condition; Standard stays 38/45/8 on
+  battery, as on Windows). Replug 17:00:27 → `balance_performance` again. No
+  `no_turbo` change, no thermald re‑target. Result: pass.
+
 ## Open (needs you)
 
-1. Suspend/resume and AC↔battery: confirm thermald re‑applies PL1/PL2/TCC
-   (`journalctl -u thermald -f`; `bench/monitor.py <dir> 300` unprivileged works
-   for this) and that ppd's power‑saver on battery doesn't surprise (it maps to
-   Whisper = 15–20 W).
+1. ~~Suspend/resume and AC↔battery~~ — done, see above.
 2. Upstream PR: branch `asus-itmt-v1` (2 commits) + `thermald/PR.md` ready;
    fork/push/open on your word (outward‑facing; the second commit changes
    behaviour for everyone).
