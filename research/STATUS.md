@@ -134,7 +134,7 @@ Nothing is queued any more.
 ## Open (needs you)
 
 1. ~~Suspend/resume and AC↔battery~~ — done, see above.
-2. Upstream PR: branch `asus-itmt-v1` (2 commits) + `thermald/PR.md` ready;
+2. ~~Upstream PR~~ — opened: https://github.com/intel/thermal_daemon/pull/609 (both commits). Watch for review;
    fork/push/open on your word (outward‑facing; the second commit changes
    behaviour for everyone).
 3. Confirm the default: stock ASUS Standard (recommended after B6 — the

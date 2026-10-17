@@ -1,5 +1,7 @@
 # Upstream PR draft — intel/thermal_daemon
 
+**Opened 2026-10-17 as https://github.com/intel/thermal_daemon/pull/609** (fork `eliau2005/thermal_daemon`, branch `asus-itmt-v1`, both commits). The text below is the draft it was built from.
+
 **Title:** gddv: tolerate ITMT v1 entries without the trailing string
 
 **Body:**
