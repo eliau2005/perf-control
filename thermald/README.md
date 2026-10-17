@@ -66,8 +66,12 @@ pkexec ./vault-override.sh install ../research/gddv/x1402_p28_0322-cool89.bin
 pkexec ./vault-override.sh remove        # back to the firmware vault
 ```
 
-Trade‑off: fewer/no TM events and ~3 °C headroom for a few W less sustained;
-deviates from the stock ASUS policy. Measure before adopting.
+Measured 2026‑10‑17 (`results/b6-override-cool89` vs `b4-ppd-standard`): as
+tuned (89 °C, 500 mW / 2 s) it changes nothing worth having — trips −2 %,
+average package temperature −0.9 °C, throughput −0.6 %. The 2 s passive loop
+is too slow against the 28 s PL1 window and the firmware's 92 °C trip; the
+chassis fan curve is the limiter. Not installed; kept as an experiment
+(`--trip`, `--step-mw`, `--period-s` are the knobs).
 
 Pitfalls found while doing this:
 - thermald's `lzma_decompress()` takes the output size from the LZMA‑alone

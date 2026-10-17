@@ -1,9 +1,8 @@
-[14:47:12] step 1: install override vault
+[15:36:18] step 1: install override vault
 installed /lib/firmware/intel/dtt/dtt_data_vault_2924972427_2715779354_2103654215_0.bin
-[14:47:33] step 2: monitor b6-override-cool89
-monitor pid 2119462
-[15:32:42] timeout waiting for /home/user/GitHub/perf-control/results/b6-override-cool89
-[15:33:02] step 3: back to the stock ASUS policy
+[15:36:39] step 2: monitor b6-override-cool89
+monitor pid 2132199
+[15:55:51] step 3: back to the stock ASUS policy
 removed /lib/firmware/intel/dtt/dtt_data_vault_2924972427_2715779354_2103654215_0.bin (features file left in place)
-[15:33:13] b6 batch finished
+[15:56:02] b6 batch finished
 b6-batch exit=0

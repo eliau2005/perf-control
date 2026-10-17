@@ -58,7 +58,7 @@ numbers available).
 | b5‑performance‑usermode (+ root tail in b5‑thermald‑performance) | ASUS **Performance** (PL1 38 / PL2 45 / TCC 5 → 95 °C), EC fan ~4.8k rpm | ~38 (turbostat) / **93.5 (max 96)** / 2826 / **15 384** | n/a (no MSR) | 46 779 (135 s) | 17 078 | 9 237 / 88 % |
 | **b4‑ppd‑standard** | B3 + auto‑cpufreq removed, **ppd balanced**, new app + perfctld, legacy units gone | 34.5 / 91.8 (max 93) / 2640 / **14 878** | 98 % | 190 552 (416 s) | 16 935 | 8 716 / 91 % |
 | b6a‑thermald‑default‑engine (accidental) | B4 but thermald in its **non‑adaptive** engine (rejected vault): PPCC‑style PL1 stepping, MMIO 35 W, `no_turbo` toggled twice | 31.8 / 87.0 (max 93) / 2529 / 14 261 | 10 % (88 % PL1) | 25 992 | 16 849 | 8 397 / 65 % |
-| b6‑override‑cool89 | queued: B4 + TCPU 89 °C passive row (override vault, adaptive) | — | | | | |
+| **b6‑override‑cool89** (15:36) | B4 + TCPU 89 °C passive row (500 mW / 2 s) in every PSVT, override vault, thermald adaptive | 34.7 / 90.9 (max 93) / 2636 / 14 785 | 70 % (34 % PL1) | 186 430 (263 s) | 16 837 | 8 679 / 82 % |
 
 Reading:
 - **B4 = B3 within noise** (sustained +1.7 %, bursts −0.6 %): removing
@@ -85,20 +85,28 @@ Reading:
   the skin sensor; not remapped (see `research/gddv/README.md`).
 - "Zero thermal‑trip events" conflicts with Windows fidelity in Standard: the
   policy relies on the hardware TCC trip for CPU temperature. The override adds
-  a TCPU 89 °C passive row so thermald lowers PL1 ~3 °C before the trip; it
-  costs a few W sustained and is opt‑in (`thermald/vault-override.sh`).
+  a TCPU 89 °C passive row so thermald lowers PL1 before the trip.
+- **B6 shows the override buys nothing as tuned**: thermald did act (MMIO PL1
+  walked 38 → 28 W and back in 125–500 mW steps, PL1‑bound 34 % of the time),
+  but the package still spent 70 % of the run on the TCC trip, trip events fell
+  only 2 % (186k vs 190k), average temperature 0.9 °C, throughput −0.6 %,
+  bursts −0.6 %, mixed −0.4 %. A 2 s / 500 mW passive loop is far slower than
+  the 28 s PL1 time window and the firmware trip at 92 °C; the real limiter is
+  the EC's Standard fan curve (~3.9k rpm ≈ 34 W of cooling at 92 °C). Making
+  the row aggressive enough to stop trips (≈85 °C or multi‑watt steps) would
+  just trade throughput for a lower number. **Recommendation: keep the stock
+  ASUS policy as default**; the override stays in the repo as an opt‑in
+  experiment (`thermald/vault-override.sh`), not installed.
 
 Performance mode reading: +4 % sustained throughput over Standard/B2 at
 93–96 °C; the TCC trip (95 °C) is still the governor. Bursts are identical
 across B2/B3/B4/B5 (PL2‑bound). Mixed CPU+GPU is best in Performance but 88 %
 thermally limited.
 
-## Queued for one password — `bench/b6-batch.sh` (~22 min)
-
-Installs the fixed override vault (aborts and restores the firmware vault if
-thermald rejects it), measures `results/b6-override-cool89` (workloads started
-by the user‑side `wait-and-run.sh`), removes the override, leaves ppd balanced.
-Log: `results/b6-batch.log`. Abort: cancel the dialog / `pkill -f wait-and-run`.
+B6 took three attempts: `b6a-thermald-default-engine` (vault rejected, LZMA size
+field), `b6b-override-idle-only` (root‑owned results dir, workloads could not
+write), then the real run at 15:36. Both failure modes are fixed in the scripts.
+Nothing is queued any more.
 
 ## Current system state
 
@@ -119,7 +127,8 @@ Log: `results/b6-batch.log`. Abort: cancel the dialog / `pkill -f wait-and-run`.
 2. Upstream PR: branch `asus-itmt-v1` (2 commits) + `thermald/PR.md` ready;
    fork/push/open on your word (outward‑facing; the second commit changes
    behaviour for everyone).
-3. Decide: keep stock ASUS Standard (thermally bound at 92 °C, "what Windows
-   does") or adopt the 89 °C override as default — after B6's numbers.
+3. Confirm the default: stock ASUS Standard (recommended after B6 — the
+   override measured no benefit). Nothing to do if you agree; it is already
+   the installed state.
 4. GNOME power‑mode mapping via ppd: Power Saver → Whisper is **15–20 W** on
    Linux (SEN1 stuck); fine for battery, surprising if chosen on AC.
