@@ -104,7 +104,8 @@ def main():
     cols = ["t", "pkg_w", "pkg_c", "hot_c", "max_mhz", "avg_mhz", "fan_rpm", "profile",
             "pwm1_enable", "no_turbo", "epp0", "gov0", "pl1_msr", "pl2_msr", "pl1_mmio",
             "pl2_mmio", "tcc_off", "core_thr", "pkg_thr", "pkg_thr_ms", "gt_mhz",
-            "ac", "limit_reasons", *[s.lower() for s in sens]]
+            "ac", "limit_reasons", "core_thr_all", *[s.lower() for s in sens]]
+    core_thr_files = sorted(glob.glob(f"{CPU}/cpu[0-9]*/thermal_throttle/core_throttle_count"))
     ts = start_turbostat()
     stop = []
     signal.signal(signal.SIGTERM, lambda *_: stop.append(1))
@@ -148,6 +149,7 @@ def main():
                 read_int(gt) if gt else None,
                 read_int("/sys/class/power_supply/AC0/online"),
                 f"{plr & 0xffff:04x}" if plr is not None else None,
+                sum(v for v in map(read_int, core_thr_files) if v is not None) if core_thr_files else None,
                 *[(read_int(f"{zones[s]}/temp") or 0) / 1000 for s in sens],
             ]
             w.writerow(row)
