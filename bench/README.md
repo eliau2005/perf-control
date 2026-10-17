@@ -23,3 +23,8 @@ GT MHz, AC, `PERF_LIMIT_REASONS` low 16 bits (0x400 PL1, 0x800 PL2, 0x2 thermal,
 Other scripts: `odvp-probe.sh` (profile → ODVP0 mapping; stop `perfctl-fand`
 first if it is in curve mode), `apply-b3.sh` / `apply-b4.sh` (configuration steps,
 root), `monitor.py` (can run unprivileged).
+
+Unattended runs: `wait-and-run.sh OUT` (user side) waits until a root monitor
+writes `OUT/monitor.csv`, then runs the workloads; `night-batch.sh` (B4 + first
+B6 attempt) and `b6-batch.sh` (override vault measurement) are the root side,
+launched once with `pkexec` so one password covers configure + measure + revert.

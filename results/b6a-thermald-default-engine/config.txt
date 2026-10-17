@@ -1,0 +1,1 @@
+config: B6a (accidental) = B4 config but the override vault was rejected (LZMA header declared unknown size) and thermald fell back to its NON-adaptive default engine: no DTT policy, MSR PL1 stepping, intel_pstate cdev toggling no_turbo. date=2026-10-17T11:19:27+03:00

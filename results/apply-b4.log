@@ -1,0 +1,21 @@
+
+-------------------------------------------------------------------------------
+
+Created symlink '/etc/systemd/system/multi-user.target.wants/perfctld.service' → '/etc/systemd/system/perfctld.service'.
+active
+{"power": 7.6, "pl1": 38.0, "pl2": 45.0, "tcc": 8, "skin": 63.05, "sen2": 57.05, "odvp0": 0, "target": "Standard", "policy": {"pl1_min": 28, "pl1_max": 38, "pl2": 45, "tcc": 8}, "throttled": false, "throttle_count": 563045}
+--- state
+ppd=active profile=balanced odvp0=0
+no_turbo=0 gov=powersave epp=balance_performance
+  performance:
+    CpuDriver:	intel_pstate
+    PlatformDriver:	platform_profile
+    Degraded:   no
+
+* balanced:
+    CpuDriver:	intel_pstate
+    PlatformDriver:	platform_profile
+
+  power-saver:
+    CpuDriver:	intel_pstate
+    PlatformDriver:	platform_profile

@@ -1,1 +1,27 @@
 [02:47:29] waiting for /home/user/GitHub/perf-control/results/b4-ppd-standard/monitor.csv …
+[11:00:16] monitor up — starting workloads (pkill stress-ng to abort)
+[11:00:16] idle_start
+[11:00:46] idle_end
+[11:00:46] sustained_start
+[11:10:46] sustained_end
+[11:10:46] cooldown_start
+[11:12:46] cooldown_end
+[11:12:46] burst1_start
+[11:12:54] burst1_end
+[11:13:16] burst2_start
+[11:13:24] burst2_end
+[11:13:47] burst3_start
+[11:13:55] burst3_end
+[11:14:17] burst4_start
+[11:14:25] burst4_end
+[11:14:47] burst5_start
+[11:14:55] burst5_end
+[11:15:17] burst6_start
+[11:15:25] burst6_end
+[11:15:47] burst7_start
+[11:15:55] burst7_end
+[11:16:17] burst8_start
+[11:16:25] burst8_end
+[11:16:47] mixed_start
+[11:18:47] mixed_end
+[11:18:47] done

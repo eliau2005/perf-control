@@ -69,6 +69,16 @@ pkexec ./vault-override.sh remove        # back to the firmware vault
 Trade‑off: fewer/no TM events and ~3 °C headroom for a few W less sustained;
 deviates from the stock ASUS policy. Measure before adopting.
 
+Pitfalls found while doing this:
+- thermald's `lzma_decompress()` takes the output size from the LZMA‑alone
+  header and rejects the "unknown size" (‑1) that Python's `lzma` module writes.
+  `gddv_patch.py` fills the real size in. A vault that fails to parse makes
+  thermald log "--adaptive option failed … Ignoring --adaptive option" and run
+  its generic engine (PPCC‑based PL1 stepping, `no_turbo` toggling) — no ASUS
+  policy at all. `vault-override.sh install` checks for that and removes the
+  vault again.
+- The payload must be ≤ 4096 bytes compressed and the file root‑owned.
+
 ## Verify
 
 ```sh

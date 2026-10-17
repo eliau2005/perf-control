@@ -1,0 +1,25 @@
+=======================================================
+    glmark2 2023.01
+=======================================================
+    OpenGL Information
+    GL_VENDOR:      Intel
+    GL_RENDERER:    Mesa Intel(R) Iris(R) Xe Graphics (ADL GT2)
+    GL_VERSION:     4.6 (Compatibility Profile) Mesa 26.0.8-1ubuntu0.3
+    Surface Config: buf=32 r=8 g=8 b=8 a=8 depth=24 stencil=0 samples=0
+    Surface Size:   800x600 windowed
+=======================================================
+[build] use-vbo=false: FPS: 3516 FrameTime: 0.284 ms
+[build] use-vbo=true: FPS: 3625 FrameTime: 0.276 ms
+[texture] texture-filter=nearest: FPS: 3727 FrameTime: 0.268 ms
+[texture] texture-filter=linear: FPS: 3695 FrameTime: 0.271 ms
+[texture] texture-filter=mipmap: FPS: 3745 FrameTime: 0.267 ms
+[shading] shading=gouraud: FPS: 2852 FrameTime: 0.351 ms
+[shading] shading=blinn-phong-inf: FPS: 2857 FrameTime: 0.350 ms
+[shading] shading=phong: FPS: 2946 FrameTime: 0.339 ms
+[shading] shading=cel: FPS: 2950 FrameTime: 0.339 ms
+[bump] bump-render=high-poly: FPS: 6009 FrameTime: 0.166 ms
+[bump] bump-render=normals: FPS: 6335 FrameTime: 0.158 ms
+[bump] bump-render=height: FPS: 3796 FrameTime: 0.263 ms
+=======================================================
+                                  glmark2 Score: 3836 
+=======================================================

@@ -41,5 +41,16 @@ EOF
   *) echo "usage: $0 install VAULT.bin | remove"; exit 2 ;;
 esac
 systemctl restart thermald
-sleep 6
-journalctl -u thermald -b --no-pager -o cat --since -8s | grep -E "Loading data vault|Look for File|GDDV|Condition Set matched" | tail -5
+sleep 8
+LOG=$(journalctl -u thermald -b --no-pager -o cat --since -10s)
+echo "$LOG" | grep -E "Loading data vault|Look for File|GDDV|adaptive|Condition Set matched" | tail -6
+# A vault thermald cannot parse makes it drop --adaptive and run its generic engine
+# (no DTT policy, MSR PL1 stepping, no_turbo toggling). Never leave that in place.
+if echo "$LOG" | grep -q "Ignoring --adaptive option"; then
+  echo "thermald rejected the vault and fell back to the non-adaptive engine" >&2
+  if [ "${1:-}" = install ]; then
+    rm -f "$NAME"; systemctl restart thermald
+    echo "override removed again; firmware vault active" >&2
+  fi
+  exit 1
+fi

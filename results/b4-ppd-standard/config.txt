@@ -1,0 +1,1 @@
+config: B4 = B3 + auto-cpufreq removed, power-profiles-daemon balanced (owns platform_profile/EPP), new app + perfctld installed, legacy units removed. ASUS Standard via patched thermald. date=2026-10-17T11:00:01+03:00

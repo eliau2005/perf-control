@@ -1,0 +1,3 @@
+ppd=power-saver -> platform_profile=quiet odvp0=1 epp=power gov=powersave mmio PL1=20000 tcc=11
+ppd=balanced -> platform_profile=balanced odvp0=0 epp=balance_performance gov=powersave mmio PL1=38000 tcc=8
+ppd=performance -> platform_profile=performance odvp0=2 epp=performance gov=powersave mmio PL1=38000 tcc=5

@@ -1,0 +1,29 @@
+[10:59:25] step 1: apply B4
+[10:59:35] apply-b4 rc=0
+    CpuDriver:	intel_pstate
+    PlatformDriver:	platform_profile
+
+  power-saver:
+    CpuDriver:	intel_pstate
+    PlatformDriver:	platform_profile
+ppd=power-saver -> platform_profile=quiet odvp0=1 epp=power gov=powersave mmio PL1=20000 tcc=11
+ppd=balanced -> platform_profile=balanced odvp0=0 epp=balance_performance gov=powersave mmio PL1=38000 tcc=8
+ppd=performance -> platform_profile=performance odvp0=2 epp=performance gov=powersave mmio PL1=38000 tcc=5
+[11:00:01] step 2: monitor B4
+monitor pid 2063869
+[11:19:09] step 3: override vault + monitor B6
+installed /lib/firmware/intel/dtt/dtt_data_vault_2924972427_2715779354_2103654215_0.bin
+Look for File name:/lib/firmware/intel/dtt/dtt_data_vault_2924972427_2715779354_2103654215_0.bin
+Loading data vault from a file
+Uncompress GDDV payload
+Unable to parse GDDV
+monitor pid 2068818
+[11:38:35] step 4: back to the stock ASUS policy, debug logging off
+removed /lib/firmware/intel/dtt/dtt_data_vault_2924972427_2715779354_2103654215_0.bin (features file left in place)
+Look for File name:/lib/firmware/intel/dtt/dtt_data_vault_2924972427_2715779354_2103654215_0.bin
+Uncompress GDDV payload
+Condition Set matched:5 target:65
+Condition Set matched:5 target:65
+Condition Set matched:5 target:65
+[11:38:46] night batch finished
+night-batch exit=0

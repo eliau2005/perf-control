@@ -92,8 +92,14 @@ def main():
     log = []
     new_body = patch_keys(body, 0, len(body), psvt_row(a.trip, a.step_mw, a.period_s), log)
     # thermald's lzma decoder insists on the stock LZMA-alone properties 5d 00 00 00 01
-    comp = lzma.compress(new_body, format=lzma.FORMAT_ALONE,
-                         filters=[{"id": lzma.FILTER_LZMA1, "dict_size": 1 << 24, "lc": 3, "lp": 0, "pb": 2}])
+    comp = bytearray(lzma.compress(new_body, format=lzma.FORMAT_ALONE,
+                                   filters=[{"id": lzma.FILTER_LZMA1, "dict_size": 1 << 24, "lc": 3, "lp": 0, "pb": 2}]))
+    # LZMA-alone header = 1 props byte + u32 dict size + u64 uncompressed size. Python
+    # writes "unknown" (-1) there; thermald's lzma_decompress() sizes its output buffer
+    # from that field and rejects -1 ("Unable to parse GDDV", falls back to the
+    # non-adaptive engine). Write the real size, as the firmware vault does.
+    struct.pack_into("<Q", comp, 5, len(new_body))
+    comp = bytes(comp)
     hdr = bytearray(b[:hsize])
     hdr[0x6c:0x8c] = hashlib.sha256(comp).digest()
     struct.pack_into("<I", hdr, 0x8c, len(comp))

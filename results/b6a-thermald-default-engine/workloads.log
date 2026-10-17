@@ -1,0 +1,27 @@
+[02:47:29] waiting for /home/user/GitHub/perf-control/results/b6-override-cool89/monitor.csv …
+[11:19:43] monitor up — starting workloads (pkill stress-ng to abort)
+[11:19:43] idle_start
+[11:20:13] idle_end
+[11:20:13] sustained_start
+[11:30:13] sustained_end
+[11:30:13] cooldown_start
+[11:32:13] cooldown_end
+[11:32:13] burst1_start
+[11:32:21] burst1_end
+[11:32:43] burst2_start
+[11:32:51] burst2_end
+[11:33:13] burst3_start
+[11:33:21] burst3_end
+[11:33:43] burst4_start
+[11:33:51] burst4_end
+[11:34:13] burst5_start
+[11:34:21] burst5_end
+[11:34:43] burst6_start
+[11:34:51] burst6_end
+[11:35:13] burst7_start
+[11:35:21] burst7_end
+[11:35:43] burst8_start
+[11:35:51] burst8_end
+[11:36:13] mixed_start
+[11:38:13] mixed_end
+[11:38:13] done
