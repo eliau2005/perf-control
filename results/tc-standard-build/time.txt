@@ -1,0 +1,24 @@
+	Command being timed: "/home/user/GitHub/v8-root/v8/third_party/ninja/ninja -C /home/user/GitHub/v8-root/v8/out/x64.release -j16 d8"
+	User time (seconds): 22813.14
+	System time (seconds): 961.65
+	Percent of CPU this job got: 1464%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 27:02.99
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 1856780
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 28033
+	Minor (reclaiming a frame) page faults: 224888158
+	Voluntary context switches: 251363
+	Involuntary context switches: 4031785
+	Swaps: 0
+	File system inputs: 2215504
+	File system outputs: 5420320
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0
+ninja rc=0

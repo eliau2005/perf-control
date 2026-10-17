@@ -1,0 +1,1 @@
+config: throttle comparison, standard (ppd balanced), stock ASUS policy via patched thermald, 30 s idle + 600 s stress-ng matrixprod all cores. date=2026-10-17T17:35:14+03:00

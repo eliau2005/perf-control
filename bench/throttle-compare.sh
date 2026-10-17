@@ -4,9 +4,9 @@
 # (same workload as the baseline), then a clean V8 build (gn clean + ninja TARGET)
 # as the desktop user. Everything sampled by monitor.py (1 Hz sysfs/MSR + turbostat).
 # No configuration is changed; the profile is restored to balanced at the end.
-# usage: throttle-compare.sh REPO V8_DIR [TARGET=d8] [MODES="standard performance"]
+# usage: throttle-compare.sh REPO V8_DIR [TARGET=d8] [MODES="standard performance"] [STEPS="stress build"]
 set -u
-P=${1:?repo}; V8=${2:?v8 dir}; TARGET=${3:-d8}; MODES=${4:-"standard performance"}
+P=${1:?repo}; V8=${2:?v8 dir}; TARGET=${3:-d8}; MODES=${4:-"standard performance"}; STEPS=${5:-"stress build"}
 R=$P/results; UID_=$(stat -c %u "$R"); GID_=$(stat -c %g "$R"); USER_=$(id -nu "$UID_")
 NINJA=$V8/third_party/ninja/ninja; GN=$V8/buildtools/linux64/gn
 log() { echo "[$(date +%T)] $*"; }
@@ -30,7 +30,7 @@ counters() {  # sum of core_throttle_count over all cpus, package count, package
 start_mon() { install -d -o "$UID_" -g "$GID_" "$1"; "$P/bench/start-monitor.sh" "$1" "$2" | tail -1 | sed 's/.*pid //'; }
 mark() { echo "$(date +%s.%N),$1" >> "$2/markers.csv"; log "$1"; }
 
-for mode in $MODES; do
+case " $STEPS " in *" stress "*) for mode in $MODES; do
   powerprofilesctl set "$(ppd_for "$mode")"; sleep 8
   log "== $mode: profile $(cat /sys/firmware/acpi/platform_profile) odvp0 $(cat /sys/bus/platform/devices/INTC1041:00/odvp0) PL1 $(( $(cat /sys/class/powercap/intel-rapl-mmio:0/constraint_0_power_limit_uw)/1000 )) tcc $(cat /sys/bus/pci/devices/0000:00:04.0/tcc_offset_degree_celsius)"
   cool_down
@@ -47,9 +47,9 @@ for mode in $MODES; do
   mark done "$OUT"
   while kill -0 "$PID" 2>/dev/null; do sleep 2; done
   chown -R "$UID_:$GID_" "$OUT"
-done
+done;; esac
 
-for mode in $MODES; do
+case " $STEPS " in *" build "*) for mode in $MODES; do
   powerprofilesctl set "$(ppd_for "$mode")"; sleep 8
   log "== $mode: V8 $TARGET clean build"
   cool_down
@@ -58,7 +58,10 @@ for mode in $MODES; do
   PID=$(start_mon "$OUT" 0); sleep 5
   echo "t,phase" > "$OUT/markers.csv"
   mark idle_start "$OUT"; sleep 30; mark idle_end "$OUT"
-  runuser -u "$USER_" -- "$GN" clean "$V8/out/x64.release" > "$OUT/gn-clean.log" 2>&1
+  # remove every built output but keep build.ninja (no gn regeneration inside the timed build);
+  # gn clean needs to run inside the source tree, which the first version of this script got wrong
+  runuser -u "$USER_" -- bash -c "cd '$V8' && '$NINJA' -C out/x64.release -t clean" > "$OUT/clean.log" 2>&1
+  echo "outputs left: $(find "$V8/out/x64.release/obj" -name '*.o' 2>/dev/null | wc -l) .o files" >> "$OUT/clean.log"
   counters before >> "$OUT/counters.txt"
   mark build_start "$OUT"
   runuser -u "$USER_" -- /usr/bin/time -v -o "$OUT/time.txt" "$NINJA" -C "$V8/out/x64.release" -j16 "$TARGET" > "$OUT/ninja.log" 2>&1
@@ -69,7 +72,7 @@ for mode in $MODES; do
   mark done "$OUT"
   sleep 3; kill "$PID" 2>/dev/null; while kill -0 "$PID" 2>/dev/null; do sleep 1; done
   chown -R "$UID_:$GID_" "$OUT"
-done
+done;; esac
 
 powerprofilesctl set balanced
 chown -R "$UID_:$GID_" "$R"

@@ -1,0 +1,30 @@
+[17:23:10] == standard: profile balanced odvp0 0 PL1 38000 tcc 8
+[17:35:14] cool-down timeout, pkg 52 C
+[17:35:25] idle_start
+[17:35:55] idle_end
+[17:35:55] sustained_start
+[17:45:55] sustained_end
+[17:45:55] done
+[17:46:31] == performance: profile performance odvp0 2 PL1 38000 tcc 5
+[17:58:33] cool-down timeout, pkg 57 C
+[17:58:43] idle_start
+[17:59:13] idle_end
+[17:59:13] sustained_start
+[18:09:13] sustained_end
+[18:09:13] done
+[18:09:50] == standard: V8 d8 clean build
+[18:21:54] cool-down timeout, pkg 73 C
+[18:22:04] idle_start
+[18:22:34] idle_end
+[18:22:34] build_start
+[18:49:37] build_end
+[18:49:37] done
+[18:49:49] == performance: V8 d8 clean build
+[19:01:51] cool-down timeout, pkg 64 C
+[19:02:01] idle_start
+[19:02:31] idle_end
+[19:02:32] build_start
+[19:02:32] build_end
+[19:02:32] done
+[19:02:36] throttle comparison finished
+throttle-compare exit=0

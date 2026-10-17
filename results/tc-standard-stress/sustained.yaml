@@ -1,0 +1,45 @@
+---
+build-info:
+      compiler: 'gcc 15.2.0'
+      source-date-epoch: 1771607837
+      stdc-version: '199901L'
+      stdc-hosted: '1'
+
+system-info:
+      stress-ng-version: '0.20.01'
+      run-by: 'root'
+      date-yyyy-mm-dd: '2026:10:17'
+      time-hh-mm-ss: '17:45:55'
+      epoch-secs: 1792248355
+      hostname: 'ubuntu'
+      sysname: 'Linux'
+      nodename: 'ubuntu'
+      release: '7.0.0-38-generic'
+      version: '#38-Ubuntu SMP PREEMPT_DYNAMIC Fri Sep  4 09:10:14 UTC 2026'
+      machine: 'x86_64'
+      compiler: 'gcc 15.2.0'
+      libc: 'glibc 2.42'
+      uptime: 86172
+      totalram: 24326492160
+      freeram: 2613321728
+      sharedram: 1442050048
+      bufferram: 244228096
+      totalswap: 8589930496
+      freeswap: 6098362368
+      pagesize: 4096
+      cpus: 16
+      cpus-online: 16
+      ticks-per-second: 100
+
+metrics:
+    - stressor: cpu
+      bogo-ops: 8875785
+      bogo-ops-per-second-usr-sys-time: 972.825271
+      bogo-ops-per-second-real-time: 14792.926230
+      wall-clock-time: 600.001978
+      user-time: 9115.690052
+      system-time: 8.029553
+      cpu-usage-per-instance: 95.038433
+      max-rss: 4004
+
+...

@@ -183,7 +183,7 @@ def build_report(run):
         "pkg_thr": delta(b, "pkg_thr"), "core_thr": delta(b, core_col), "core_col": core_col,
         "limits": limit_shares(b),
         "pkg_w": mean(b, "pkg_w"), "pkg_c": mean(b, "pkg_c"),
-        "pkg_c_max": max(f(r["pkg_c"]) for r in b if f(r["pkg_c"]) is not None),
+        "pkg_c_max": max([f(r["pkg_c"]) for r in b if f(r["pkg_c"]) is not None] or [None], key=lambda v: v or 0),
         "avg_mhz": mean(b, "avg_mhz"), "fan": mean(b, "fan_rpm"),
         "ts": turbostat(run, t0, t1), "counters": counters(run),
         "profile": sorted({r["profile"] for r in b}),
