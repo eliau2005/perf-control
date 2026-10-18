@@ -66,6 +66,21 @@ the polkit action and a `.desktop` entry.
 
 Rollback for every piece is in [`docs/ROLLBACK.md`](docs/ROLLBACK.md).
 
+Release tarballs (`perf-control-<version>.tar.gz` + `.sha256`) are on the
+[Releases](https://github.com/eliau2005/perf-control/releases) page. Unpack one
+and run `pkexec ./install.sh` from inside it.
+
+## Development
+
+```sh
+make check   # shellcheck, ruff, py_compile, desktop-file-validate, xmllint
+make dist    # dist/perf-control-$(cat VERSION).tar.gz
+```
+
+CI runs `make check` and `make dist` on every push and pull request to `main`.
+Pushing a tag `vX.Y.Z` that matches `VERSION` publishes a GitHub release with
+the tarball attached.
+
 ## Results in brief
 
 Ten minutes of all‑core `stress-ng matrixprod` (full protocol in

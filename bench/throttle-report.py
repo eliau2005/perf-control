@@ -12,7 +12,6 @@ import csv
 import os
 import re
 import statistics as st
-import sys
 
 LIMIT_BITS = {"PROCHOT": 0x1, "thermal": 0x2, "PL1": 0x400, "PL2": 0x800}
 
