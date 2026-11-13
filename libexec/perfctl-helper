@@ -4,11 +4,28 @@
 profile quiet|balanced|performance   ASUS mode (Whisper/Standard/Performance):
                                      EC fan table + DTT policy via ODVP0
 fan auto|full                        CPU fan: firmware table or full speed
+battery limit 20..100                charge limit (kept across boot/resume)
+battery full-once                    charge to 100 % once, then go back to the
+                                     limit when full or when AC is unplugged
+battery cancel                       drop a pending one-time full charge
+battery apply                        (boot/resume unit) re-apply the saved state
+battery watch                        (watch unit) wait for full/unplug, restore
 """
 import glob
+import json
+import os
+import subprocess
 import sys
+import time
 
-USAGE = "usage: perfctl-helper profile quiet|balanced|performance | fan auto|full"
+USAGE = ("usage: perfctl-helper profile quiet|balanced|performance | fan auto|full | "
+         "battery limit 20..100|full-once|cancel|apply|watch")
+BAT = "/sys/class/power_supply/BAT0"
+AC = "/sys/class/power_supply/AC0/online"
+THRESHOLD = f"{BAT}/charge_control_end_threshold"
+STATE = "/var/lib/perfctl/battery.json"
+WATCH_UNIT = "perfctl-battery-watch.service"
+WATCH_INTERVAL = 20
 
 
 def fail(msg=USAGE):
@@ -16,20 +33,108 @@ def fail(msg=USAGE):
     sys.exit(2)
 
 
+def read(path, default=""):
+    try:
+        with open(path) as f:
+            return f.read().strip()
+    except OSError:
+        return default
+
+
+def write(path, value):
+    with open(path, "w") as f:
+        f.write(str(value))
+
+
 def asus_hwmon():
     for h in glob.glob("/sys/class/hwmon/hwmon*"):
-        with open(f"{h}/name") as f:
-            if f.read().strip() == "asus":
-                return h
+        if read(f"{h}/name") == "asus":
+            return h
     fail("asus hwmon not found")
+
+
+# -- battery -----------------------------------------------------------------
+def load_battery():
+    try:
+        with open(STATE) as f:
+            st = json.load(f)
+        limit = int(st["limit"])
+        if 20 <= limit <= 100:
+            return {"limit": limit, "full_once": bool(st.get("full_once"))}
+    except (OSError, ValueError, KeyError, TypeError):
+        pass
+    # first run: adopt whatever is set now (e.g. a previous 80 % unit)
+    cur = read(THRESHOLD)
+    limit = int(cur) if cur.isdigit() and 20 <= int(cur) <= 100 else 100
+    return {"limit": limit, "full_once": False}
+
+
+def save_battery(st):
+    os.makedirs(os.path.dirname(STATE), exist_ok=True)
+    tmp = STATE + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(st, f)
+    os.chmod(tmp, 0o644)
+    os.replace(tmp, STATE)
+
+
+def apply_battery(st):
+    if not os.path.exists(THRESHOLD):
+        fail("battery charge limit not supported (no charge_control_end_threshold)")
+    write(THRESHOLD, 100 if st["full_once"] else st["limit"])
+
+
+def systemctl(*args):
+    subprocess.run(["systemctl", "--no-block", *args], check=False,
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def full_charge_done():
+    if read(AC) != "1":
+        return True  # unplugged: the one-time charge ends, like MyASUS
+    status, cap = read(f"{BAT}/status"), read(f"{BAT}/capacity", "0")
+    cap = int(cap) if cap.isdigit() else 0
+    return status == "Full" or cap >= 100 or (status == "Not charging" and cap >= 98)
+
+
+def battery(args):
+    st = load_battery()
+    cmd = args[0] if args else ""
+    if cmd == "limit" and len(args) == 2 and args[1].isdigit() and 20 <= int(args[1]) <= 100:
+        st = {"limit": int(args[1]), "full_once": False}
+        systemctl("stop", WATCH_UNIT)
+    elif cmd == "full-once" and len(args) == 1:
+        if read(AC) != "1":
+            fail("plug in the charger first")
+        st["full_once"] = True
+    elif cmd == "cancel" and len(args) == 1:
+        st["full_once"] = False
+        systemctl("stop", WATCH_UNIT)
+    elif cmd == "apply" and len(args) == 1:
+        pass
+    elif cmd == "watch" and len(args) == 1:
+        while st["full_once"] and not full_charge_done():
+            time.sleep(WATCH_INTERVAL)
+            st = load_battery()
+        if st["full_once"]:
+            st["full_once"] = False
+            save_battery(st)
+            apply_battery(st)
+        return
+    else:
+        fail()
+    save_battery(st)
+    apply_battery(st)
+    if st["full_once"]:
+        systemctl("start", WATCH_UNIT)
 
 
 args = sys.argv[1:]
 if args[:1] == ["profile"] and args[1:] in (["quiet"], ["balanced"], ["performance"]):
-    with open("/sys/firmware/acpi/platform_profile", "w") as f:
-        f.write(args[1])
+    write("/sys/firmware/acpi/platform_profile", args[1])
 elif args[:1] == ["fan"] and args[1:] in (["auto"], ["full"]):
-    with open(f"{asus_hwmon()}/pwm1_enable", "w") as f:
-        f.write("0" if args[1] == "full" else "2")
+    write(f"{asus_hwmon()}/pwm1_enable", "0" if args[1] == "full" else "2")
+elif args[:1] == ["battery"]:
+    battery(args[1:])
 else:
     fail()

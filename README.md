@@ -11,13 +11,18 @@ policy in its GDDV data vault, and that policy is the reference here.
 
 - **Performance Control app** (`bin/perf-control`, GTK 4 / libadwaita): picks the
   ASUS mode (Whisper / Standard / Performance) through power‑profiles‑daemon,
-  switches the fan between auto and full, and shows live monitoring: DTT target,
+  switches the fan between auto and full, sets the battery charge limit
+  (60 / 80 / 100 %, plus a one‑time charge to 100 % that returns to the limit
+  when the battery is full or the charger is unplugged), and shows live monitoring: DTT target,
   PL1/PL2/TCC, package power and temperature, clocks, SEN1/SEN2, throttle counters.
 - **`perfctld`** (`libexec/perfctld`, systemd unit in `systemd/`): a read‑only root
   daemon. Once a second it writes `/run/perfctl/state.json` with the values the
   UI cannot read unprivileged. It never writes hardware.
-- **`perfctl-helper`** + polkit policy: a pkexec fallback for switching profiles
-  and the fan when ppd isn't available.
+- **`perfctl-helper`** + polkit policy: switches the battery charge limit, and is
+  a pkexec fallback for switching profiles and the fan when ppd isn't available.
+  The limit is saved in `/var/lib/perfctl/battery.json`; `perfctl-battery.service`
+  applies it again at boot and after resume, and `perfctl-battery-watch.service`
+  runs only while a one‑time full charge is pending.
 - **`powermon`**: a console monitor for package power, temperature and throttling,
   with a CSV log.
 - **Patched thermald** (`thermald/`): install script, systemd drop‑in and notes
@@ -56,12 +61,13 @@ and (for the DTT policy to apply) the patched thermald.
 # 1. patched thermald: build per thermald/README.md, then
 pkexec thermald/install.sh /path/to/thermal_daemon/thermald
 
-# 2. app + daemon (also removes the legacy static-limit and fan units)
+# 2. app + daemon (also removes the legacy static-limit, fan and 80 % charge-limit units)
 pkexec ./install.sh
 ```
 
 Installed paths: `/usr/local/bin/perf-control`, `/usr/local/bin/powermon`,
 `/usr/local/libexec/perfctl{d,-helper}`, `/etc/systemd/system/perfctld.service`,
+`perfctl-battery{,-watch}.service`,
 the polkit action and a `.desktop` entry.
 
 Rollback for every piece is in [`docs/ROLLBACK.md`](docs/ROLLBACK.md).

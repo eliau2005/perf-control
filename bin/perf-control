@@ -21,6 +21,15 @@ PROFILE = "/sys/firmware/acpi/platform_profile"
 CPU = "/sys/devices/system/cpu"
 STATE = "/run/perfctl/state.json"
 MMIO = "/sys/class/powercap/intel-rapl-mmio:0"
+BAT = "/sys/class/power_supply/BAT0"
+THRESHOLD = f"{BAT}/charge_control_end_threshold"
+BAT_STATE = "/var/lib/perfctl/battery.json"
+CHARGE_LIMITS = [("60", "60 %"), ("80", "80 %"), ("100", "100 %")]
+CHARGE_INFO = {
+    "60": "Maximum lifespan: stops charging at 60 %",
+    "80": "Balanced: stops charging at 80 %",
+    "100": "Full capacity: charges to 100 %",
+}
 PPD = ("net.hadess.PowerProfiles", "/net/hadess/PowerProfiles")
 PPD_MAP = {"quiet": "power-saver", "balanced": "balanced", "performance": "performance"}
 
@@ -285,6 +294,25 @@ class Window(Adw.ApplicationWindow):
         ctl.add(self.fan_row)
         page.add(ctl)
 
+        # Battery
+        self.has_battery = bool(read(THRESHOLD))
+        bat = Adw.PreferencesGroup(title="Battery", visible=self.has_battery)
+        self.limit_row = Adw.ActionRow(title="Charge limit")
+        self.limit = Adw.ToggleGroup(valign=Gtk.Align.CENTER)
+        for name, label in CHARGE_LIMITS:
+            self.limit.add(Adw.Toggle(name=name, label=label))
+        self.limit.connect("notify::active-name",
+                           lambda t, _p: None if self.syncing or not t.get_active_name()
+                           else self.run("battery", "limit", t.get_active_name()))
+        self.limit_row.add_suffix(self.limit)
+        bat.add(self.limit_row)
+        self.once_row = Adw.ActionRow(title="One-time full charge")
+        self.once_btn = Gtk.Button(valign=Gtk.Align.CENTER)
+        self.once_btn.connect("clicked", self.toggle_full_once)
+        self.once_row.add_suffix(self.once_btn)
+        bat.add(self.once_row)
+        page.add(bat)
+
         self.sync_controls()
         self.refresh()
         GLib.timeout_add_seconds(1, self.refresh)
@@ -334,12 +362,41 @@ class Window(Adw.ApplicationWindow):
 
         proc.communicate_utf8_async(None, None, done)
 
+    def battery_state(self):
+        """(limit, full_once). The saved limit wins while a full charge is pending."""
+        st = read_json(BAT_STATE, {})
+        full_once = bool(st.get("full_once"))
+        limit = str(st["limit"]) if "limit" in st else read(THRESHOLD)
+        return limit, full_once
+
+    def toggle_full_once(self, _btn):
+        _limit, full_once = self.battery_state()
+        self.run("battery", "cancel" if full_once else "full-once")
+
     def sync_controls(self):
         mode = read(PROFILE, "balanced")
         self.set_toggle(self.mode, mode)
         self.mode_row.set_subtitle(MODE_INFO.get(mode, ""))
         full = self.asus and read(f"{self.asus}/pwm1_enable") == "0"
         self.set_toggle(self.fan, "full" if full else "auto")
+        if self.has_battery:
+            limit, full_once = self.battery_state()
+            self.set_toggle(self.limit, limit)
+            self.limit_row.set_subtitle(CHARGE_INFO.get(limit, f"Stops charging at {limit} %"))
+            on_ac = read("/sys/class/power_supply/AC0/online") == "1"
+            if full_once:
+                self.once_row.set_subtitle(f"Charging to 100 % now · back to {limit} % "
+                                           "when full or unplugged")
+                self.once_btn.set_label("Cancel")
+                self.once_btn.set_css_classes([])
+                self.once_btn.set_sensitive(True)
+            else:
+                self.once_row.set_subtitle(
+                    "Charge to 100 % this time only, then return to the limit"
+                    if on_ac else "Plug in the charger to use this")
+                self.once_btn.set_label("Charge to 100 %")
+                self.once_btn.set_css_classes(["suggested-action"])
+                self.once_btn.set_sensitive(on_ac and limit != "100")
 
     def chip(self, name, text, on=None):
         c = self.chips[name]

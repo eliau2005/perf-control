@@ -12,16 +12,25 @@ rm -f /etc/systemd/system/power-limits.service /etc/systemd/system/perfctl-fand.
       /usr/local/libexec/perfctl-fand.bak-28w /usr/local/bin/perf-control.bak-28w \
       /etc/perfctl/fan.json
 
+# legacy: fixed 80 % charge-limit unit (the helper now owns the limit; its
+# current value is adopted on first run)
+systemctl disable battery-charge-threshold.service 2>/dev/null || true
+rm -f /etc/systemd/system/battery-charge-threshold.service
+
 install -m 0755 "$HERE/bin/perf-control" /usr/local/bin/perf-control
 install -m 0755 "$HERE/bin/powermon" /usr/local/bin/powermon
 install -m 0755 "$HERE/libexec/perfctl-helper" /usr/local/libexec/perfctl-helper
 install -m 0755 "$HERE/libexec/perfctld" /usr/local/libexec/perfctld
 install -m 0644 "$HERE/polkit/local.perfctl.policy" /usr/share/polkit-1/actions/local.perfctl.policy
 install -m 0644 "$HERE/systemd/perfctld.service" /etc/systemd/system/perfctld.service
+install -m 0644 "$HERE/systemd/perfctl-battery.service" /etc/systemd/system/perfctl-battery.service
+install -m 0644 "$HERE/systemd/perfctl-battery-watch.service" /etc/systemd/system/perfctl-battery-watch.service
 install -m 0644 "$HERE/share/local.PerfControl.desktop" /usr/share/applications/local.PerfControl.desktop
 systemctl daemon-reload
 systemctl enable --now perfctld.service
 systemctl restart perfctld.service
+systemctl enable perfctl-battery.service
+systemctl start perfctl-battery.service || true
 sleep 2
 systemctl is-active perfctld.service
 cat /run/perfctl/state.json; echo
