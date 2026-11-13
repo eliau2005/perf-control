@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Performance Control: ASUS performance mode, fan boost and live monitoring.
+"""Performance Control: ASUS performance mode, fan, battery charge limit and
+live monitoring.
 
 Power limits are owned by thermald running ASUS's own Intel DTT policy; the
 mode selector only switches the firmware profile (Whisper/Standard/Performance),
@@ -8,8 +9,11 @@ import collections
 import glob
 import json
 import math
+import os
+import re
 import sys
 
+import cairo
 import gi
 
 gi.require_version("Gtk", "4.0")
@@ -21,36 +25,98 @@ PROFILE = "/sys/firmware/acpi/platform_profile"
 CPU = "/sys/devices/system/cpu"
 STATE = "/run/perfctl/state.json"
 MMIO = "/sys/class/powercap/intel-rapl-mmio:0"
+AC = "/sys/class/power_supply/AC0/online"
 BAT = "/sys/class/power_supply/BAT0"
 THRESHOLD = f"{BAT}/charge_control_end_threshold"
 BAT_STATE = "/var/lib/perfctl/battery.json"
-CHARGE_LIMITS = [("60", "60 %"), ("80", "80 %"), ("100", "100 %")]
-CHARGE_INFO = {
-    "60": "Maximum lifespan: stops charging at 60 %",
-    "80": "Balanced: stops charging at 80 %",
-    "100": "Full capacity: charges to 100 %",
-}
+SETTINGS = os.path.join(GLib.get_user_config_dir(), "perf-control", "settings.json")
 PPD = ("net.hadess.PowerProfiles", "/net/hadess/PowerProfiles")
 PPD_MAP = {"quiet": "power-saver", "balanced": "balanced", "performance": "performance"}
 
 FREQ_MAX = 4.7  # GHz, i7-1260P max turbo
 TEMP_MIN, TEMP_MAX = 30, 100
 HISTORY = 120  # seconds
-MODES = [("quiet", "Whisper"), ("balanced", "Standard"), ("performance", "Performance")]
-MODE_INFO = {
-    "quiet": "PL1 15–20 W · PL2 45 W · throttles at 89 °C",
-    "balanced": "PL1 38–45 W while the skin sensor is under 63 °C, then 28–38 W · PL2 45 W · throttles at 92 °C",
-    "performance": "PL1 35–38 W · PL2 45 W · throttles at 95 °C",
-}
 
-TEMP_COLOR = (0.90, 0.38, 0.0)
+# (sysfs name, label, icon, one-line summary)
+MODES = [
+    ("quiet", "Whisper", "weather-clear-night-symbolic", "Quiet · 15–20 W"),
+    ("balanced", "Standard", "power-profile-balanced-symbolic", "Balanced · 28–45 W"),
+    ("performance", "Performance", "bolt-symbolic", "Fast · 35–38 W"),
+]
+MODE_INFO = {
+    "quiet": "Whisper: PL1 15–20 W · PL2 45 W · throttles at 89 °C.",
+    "balanced": "Standard: PL1 38–45 W while the skin sensor is under 63 °C, then 28–38 W · "
+                "PL2 45 W · throttles at 92 °C.",
+    "performance": "Performance: PL1 35–38 W · PL2 45 W · throttles at 95 °C.",
+}
+CHARGE_LIMITS = [("60", "60 %"), ("80", "80 %"), ("100", "100 %")]
+CHARGE_INFO = {
+    "60": "Maximum lifespan · stops at 60 %",
+    "80": "Balanced · stops at 80 %",
+    "100": "Full capacity · charges to 100 %",
+}
+THEMES = {"system": Adw.ColorScheme.DEFAULT, "light": Adw.ColorScheme.FORCE_LIGHT,
+          "dark": Adw.ColorScheme.FORCE_DARK}
+
+TEMP_COLOR = (0.93, 0.42, 0.13)
 FAN_COLOR = (0.21, 0.52, 0.89)
-FREQ_COLOR = (0.57, 0.25, 0.67)
+FREQ_COLOR = (0.57, 0.33, 0.80)
+POWER_COLOR = (0.18, 0.66, 0.45)
+LOW_COLOR = (0.88, 0.27, 0.22)
+
 CSS = """
-.gauge-card { padding: 12px 6px 6px 6px; }
-.chip { padding: 4px 12px; border-radius: 999px; background: alpha(currentColor, 0.08); font-size: 0.9em; }
-.chip.on { background: alpha(@accent_bg_color, 0.25); }
-.chip.warn { background: alpha(@error_bg_color, 0.35); }
+@keyframes rise {
+  from { opacity: 0; transform: translateY(14px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes pulse { from { opacity: 1; } to { opacity: 0.35; } }
+.rise { animation: rise 520ms cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+.d1 { animation-delay: 60ms; }
+.d2 { animation-delay: 120ms; }
+.d3 { animation-delay: 180ms; }
+.d4 { animation-delay: 240ms; }
+
+button.mode-card {
+  padding: 14px 6px 12px 6px;
+  border-radius: 16px;
+  background: alpha(currentColor, 0.05);
+  box-shadow: none;
+  transition: background 250ms ease, box-shadow 250ms ease, transform 180ms ease;
+}
+button.mode-card:hover { background: alpha(currentColor, 0.09); transform: translateY(-2px); }
+button.mode-card:active { transform: scale(0.97); }
+button.mode-card:checked {
+  background: alpha(@accent_bg_color, 0.16);
+  box-shadow: inset 0 0 0 2px @accent_bg_color;
+  color: inherit;
+}
+button.mode-card image {
+  transition: transform 380ms cubic-bezier(0.34, 1.56, 0.64, 1), color 250ms ease;
+}
+button.mode-card:checked image { color: @accent_color; transform: scale(1.22); }
+.mode-name { font-weight: 700; }
+.mode-sub { font-size: 0.82em; opacity: 0.65; }
+
+.tile { padding: 12px 14px 6px 14px; transition: transform 180ms ease; }
+.tile:hover { transform: translateY(-2px); }
+.tile-label { font-size: 0.85em; font-weight: 600; opacity: 0.7; }
+.tile-note { font-size: 0.8em; opacity: 0.55; }
+.tile-note.warn { color: @error_color; opacity: 1; font-weight: 700;
+                  animation: pulse 800ms ease-in-out infinite alternate; }
+.tile-value { font-size: 24pt; font-weight: 800; font-feature-settings: "tnum";
+              transition: color 400ms ease; }
+.tile-value.hot { color: @warning_color; }
+.tile-value.crit { color: @error_color; }
+.tile-unit { font-weight: 600; opacity: 0.5; }
+
+.battery-card { padding: 14px 16px 12px 16px; }
+.charging-icon { color: @success_color; animation: pulse 1100ms ease-in-out infinite alternate; }
+.detail-card { padding: 12px 16px; }
+.key { opacity: 0.65; }
+.value { font-feature-settings: "tnum"; }
+.value.good { color: @success_color; font-weight: 600; }
+.value.bad { color: @error_color; font-weight: 600; }
+.settings-pop { padding: 6px; }
 """
 
 
@@ -70,6 +136,11 @@ def read_json(path, default):
         return default
 
 
+def read_num(path):
+    v = read(path)
+    return int(v) if v.lstrip("-").isdigit() else None
+
+
 def hwmon(name):
     for h in glob.glob("/sys/class/hwmon/hwmon*"):
         if read(f"{h}/name") == name:
@@ -77,151 +148,260 @@ def hwmon(name):
     return None
 
 
-def fg(widget):
-    c = widget.get_color()
-    return c.red, c.green, c.blue
+def cpu_name():
+    for line in read("/proc/cpuinfo").splitlines():
+        if line.startswith("model name"):
+            m = re.search(r"(i[3579]-\w+)", line)
+            return f"Core {m.group(1)}" if m else line.split(":", 1)[1].strip()
+    return ""
 
 
-def heat(frac):
-    """Green -> amber -> red for 0..1."""
-    frac = max(0.0, min(1.0, frac))
-    if frac < 0.5:
-        return (0.20 + 1.4 * frac * 0.55, 0.66, 0.33 - frac * 0.4)
-    return (0.97, 0.66 - (frac - 0.5) * 1.1, 0.13)
+def animations_enabled():
+    return Gtk.Settings.get_default().props.gtk_enable_animations
 
 
-class Gauge(Gtk.DrawingArea):
-    def __init__(self, title, unit, lo, hi, color=None, fmt="{:.0f}"):
-        super().__init__(content_width=110, content_height=130, hexpand=True)
-        self.title, self.unit, self.lo, self.hi = title, unit, lo, hi
-        self.color, self.fmt, self.value = color, fmt, None
-        self.set_draw_func(self.draw)
-
-    def set_value(self, v, hi=None):
-        self.value = v
-        if hi:
-            self.hi = hi
-        self.queue_draw()
-
-    def draw(self, _a, cr, w, h):
-        r_fg = fg(self)
-        cx, cy = w / 2, h * 0.52
-        r = min(w, h * 1.15) * 0.40
-        start, sweep = math.radians(135), math.radians(270)
-        cr.set_line_width(r * 0.16)
-        cr.set_line_cap(1)  # round
-        cr.set_source_rgba(*r_fg, 0.12)
-        cr.arc(cx, cy, r, start, start + sweep)
-        cr.stroke()
-        if self.value is not None:
-            frac = max(0.0, min(1.0, (self.value - self.lo) / (self.hi - self.lo)))
-            cr.set_source_rgb(*(self.color or heat(frac)))
-            cr.arc(cx, cy, r, start, start + max(sweep * frac, 0.01))
-            cr.stroke()
-            text = self.fmt.format(self.value)
-        else:
-            text = "–"
-        cr.set_source_rgb(*r_fg)
-        cr.select_font_face("Sans", 0, 1)
-        cr.set_font_size(r * 0.52)
-        ext = cr.text_extents(text)
-        cr.move_to(cx - ext.width / 2 - ext.x_bearing, cy + ext.height / 2 - r * 0.08)
-        cr.show_text(text)
-        cr.select_font_face("Sans", 0, 0)
-        cr.set_font_size(r * 0.22)
-        cr.set_source_rgba(*r_fg, 0.6)
-        ext = cr.text_extents(self.unit)
-        cr.move_to(cx - ext.width / 2, cy + r * 0.45)
-        cr.show_text(self.unit)
-        cr.set_font_size(max(11, r * 0.24))
-        cr.set_source_rgba(*r_fg, 0.85)
-        ext = cr.text_extents(self.title)
-        cr.move_to(cx - ext.width / 2, h - 4)
-        cr.show_text(self.title)
+def fmt_duration(hours):
+    mins = int(round(hours * 60))
+    return f"{mins // 60} h {mins % 60:02d} min" if mins >= 60 else f"{mins} min"
 
 
-class History(Gtk.DrawingArea):
-    def __init__(self):
-        super().__init__(content_height=150, hexpand=True)
+def tween(widget, duration, callback, easing=Adw.Easing.EASE_OUT_CUBIC):
+    anim = Adw.TimedAnimation.new(widget, 0, 1, duration,
+                                  Adw.CallbackAnimationTarget.new(callback))
+    anim.set_easing(easing)
+    return anim
+
+
+def rounded_rect(cr, x, y, w, h, r):
+    r = min(r, h / 2, w / 2)
+    cr.new_sub_path()
+    cr.arc(x + w - r, y + r, r, -math.pi / 2, 0)
+    cr.arc(x + w - r, y + h - r, r, 0, math.pi / 2)
+    cr.arc(x + r, y + h - r, r, math.pi / 2, math.pi)
+    cr.arc(x + r, y + r, r, math.pi, 3 * math.pi / 2)
+    cr.close_path()
+
+
+class Sparkline(Gtk.DrawingArea):
+    """Right-aligned filled line of the last HISTORY samples that scrolls
+    smoothly between one-second samples."""
+
+    def __init__(self, color, lo, hi):
+        super().__init__(content_height=52, hexpand=True)
+        self.color, self.lo, self.hi = color, lo, hi
         self.data = collections.deque(maxlen=HISTORY)
-        self.fan_max = 6500
-        self.watt_max = 50
+        self.shift = 1.0
+        self.anim = tween(self, 1000, self.on_shift, Adw.Easing.LINEAR)
         self.set_draw_func(self.draw)
 
-    def push(self, temp, fan, freq, watts):
-        self.data.append((temp, fan, freq, watts))
+    def on_shift(self, v):
+        self.shift = v
+        self.queue_draw()
+
+    def push(self, v):
+        self.data.append(v)
+        self.anim.reset()
+        self.anim.play()
+
+    def draw(self, _a, cr, w, h):
+        right = w - 4  # room for the end dot
+        step = right / (HISTORY - 2)
+        n = len(self.data)
+        offset = step * (1 - self.shift)
+        top, bottom = 5, h - 2
+        pts = []
+        for i, v in enumerate(self.data):
+            if v is None:
+                continue
+            f = max(0.0, min(1.0, (v - self.lo) / (self.hi - self.lo)))
+            pts.append((right - step * (n - 1 - i) + offset, bottom - (bottom - top) * f))
+        if len(pts) < 2:
+            return
+        cr.move_to(*pts[0])
+        for p in pts[1:]:
+            cr.line_to(*p)
+        path = cr.copy_path()
+        cr.line_to(pts[-1][0], h)
+        cr.line_to(pts[0][0], h)
+        cr.close_path()
+        grad = cairo.LinearGradient(0, top, 0, h)
+        grad.add_color_stop_rgba(0, *self.color, 0.32)
+        grad.add_color_stop_rgba(1, *self.color, 0.0)
+        cr.set_source(grad)
+        cr.fill()
+        cr.append_path(path)
+        cr.set_source_rgb(*self.color)
+        cr.set_line_width(2)
+        cr.set_line_join(cairo.LINE_JOIN_ROUND)
+        cr.stroke()
+        x, y = pts[-1]
+        cr.set_source_rgba(*self.color, 0.25)
+        cr.arc(x, y, 6, 0, 2 * math.pi)
+        cr.fill()
+        cr.set_source_rgb(*self.color)
+        cr.arc(x, y, 3, 0, 2 * math.pi)
+        cr.fill()
+
+
+class FanIcon(Gtk.DrawingArea):
+    """Three-blade fan that spins in proportion to the measured RPM."""
+
+    def __init__(self, color):
+        super().__init__(content_width=16, content_height=16, valign=Gtk.Align.CENTER)
+        self.color, self.rpm, self.angle, self.last = color, 0, 0.0, None
+        self.set_draw_func(self.draw)
+        if animations_enabled():
+            self.add_tick_callback(self.tick)
+
+    def tick(self, _w, clock):
+        t = clock.get_frame_time() / 1e6
+        if self.last is not None and self.rpm:
+            self.angle += (t - self.last) * 2 * math.pi * self.rpm / 1500
+            self.queue_draw()
+        self.last = t
+        return True
+
+    def draw(self, _a, cr, w, h):
+        cx, cy, r = w / 2, h / 2, min(w, h) / 2
+        cr.set_source_rgb(*self.color)
+        for k in range(3):
+            cr.save()
+            cr.translate(cx, cy)
+            cr.rotate(self.angle + k * 2 * math.pi / 3)
+            cr.translate(r * 0.45, 0)
+            cr.scale(r * 0.5, r * 0.26)
+            cr.arc(0, 0, 1, 0, 2 * math.pi)
+            cr.restore()
+            cr.fill()
+        cr.arc(cx, cy, r * 0.2, 0, 2 * math.pi)
+        cr.fill()
+
+
+class Tile(Gtk.Box):
+    """Stat card: label + note, big animated value + unit, sparkline."""
+
+    def __init__(self, label, unit, color, lo, hi, fmt="{:.0f}", icon=None):
+        super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=2,
+                         css_classes=["card", "tile"], hexpand=True)
+        self.fmt, self.shown = fmt, None
+        head = Gtk.Box(spacing=6)
+        if icon:
+            head.append(icon)
+        head.append(Gtk.Label(label=label, xalign=0, hexpand=True, css_classes=["tile-label"]))
+        self.note = Gtk.Label(xalign=1, css_classes=["tile-note"])
+        head.append(self.note)
+        self.append(head)
+        row = Gtk.Box(spacing=4)
+        self.value = Gtk.Label(label="–", css_classes=["tile-value"], valign=Gtk.Align.BASELINE)
+        row.append(self.value)
+        row.append(Gtk.Label(label=unit, css_classes=["tile-unit"], valign=Gtk.Align.BASELINE))
+        self.append(row)
+        self.spark = Sparkline(color, lo, hi)
+        self.append(self.spark)
+        self.src = self.dst = 0.0
+        self.anim = tween(self, 700, self.on_tween)
+
+    def on_tween(self, p):
+        self.shown = self.src + (self.dst - self.src) * p
+        self.value.set_label(self.fmt.format(self.shown))
+
+    def set(self, v, note=None, level=None):
+        if v is None:
+            self.shown = None
+            self.value.set_label("–")
+        elif self.shown is None:
+            self.shown = v
+            self.value.set_label(self.fmt.format(v))
+        else:
+            self.src, self.dst = self.shown, v
+            self.anim.reset()
+            self.anim.play()
+        self.value.set_css_classes(["tile-value"] + ([level] if level else []))
+        if note is not None:
+            self.note.set_label(note)
+        self.spark.push(v)
+
+
+class BatteryBar(Gtk.DrawingArea):
+    """Charge level with a marker at the limit and a sweep while charging."""
+
+    def __init__(self):
+        super().__init__(content_height=16, hexpand=True)
+        self.level, self.shown, self.limit, self.charging = 0, None, 100, False
+        self.sweep, self.last = 0.0, None
+        self.src = self.dst = 0.0
+        self.anim = tween(self, 900, self.on_tween)
+        self.set_draw_func(self.draw)
+        if animations_enabled():
+            self.add_tick_callback(self.tick)
+
+    def on_tween(self, p):
+        self.shown = self.src + (self.dst - self.src) * p
+        self.queue_draw()
+
+    def tick(self, _w, clock):
+        t = clock.get_frame_time() / 1e6
+        if self.charging and self.last is not None:
+            self.sweep = (self.sweep + (t - self.last) / 1.8) % 1.0
+            self.queue_draw()
+        self.last = t
+        return True
+
+    def update(self, level, limit, charging):
+        if self.shown is None:
+            self.shown = level
+        elif level != self.level:
+            self.src, self.dst = self.shown, level
+            self.anim.reset()
+            self.anim.play()
+        self.level, self.limit = level, limit
+        if charging != self.charging:
+            self.charging = charging
+            self.sweep = 0.0
         self.queue_draw()
 
     def draw(self, _a, cr, w, h):
-        c = fg(self)
-        left, right, top, bottom = 8, 8, 22, 8
-        pw, ph = w - left - right, h - top - bottom
-        cr.set_line_width(1)
-        cr.set_source_rgba(*c, 0.10)
-        for i in range(5):
-            y = top + ph * i / 4
-            cr.move_to(left, y)
-            cr.line_to(left + pw, y)
-        cr.stroke()
-
-        series = [
-            (0, TEMP_COLOR, TEMP_MIN, TEMP_MAX, "Temp"),
-            (1, FAN_COLOR, 0, self.fan_max, "Fan"),
-            (2, FREQ_COLOR, 0, FREQ_MAX, "Clock"),
-            (3, (0.2, 0.6, 0.4), 0, self.watt_max, "Power"),
-        ]
-        x = left
-        cr.set_font_size(11)
-        for _i, col, _lo, _hi, name in series:
-            cr.set_source_rgb(*col)
-            cr.rectangle(x, 6, 10, 10)
+        c = self.get_color()
+        fgc = (c.red, c.green, c.blue)
+        bar_h, y = 10, (h - 10) / 2
+        rounded_rect(cr, 0, y, w, bar_h, bar_h / 2)
+        cr.set_source_rgba(*fgc, 0.10)
+        cr.fill()
+        level = self.shown or 0
+        fw = max(bar_h, w * level / 100)
+        color = LOW_COLOR if level < 20 else POWER_COLOR
+        rounded_rect(cr, 0, y, fw, bar_h, bar_h / 2)
+        cr.set_source_rgb(*color)
+        cr.fill_preserve()
+        if self.charging:
+            sx = -w * 0.3 + (fw + w * 0.6) * self.sweep
+            grad = cairo.LinearGradient(sx - w * 0.15, 0, sx + w * 0.15, 0)
+            grad.add_color_stop_rgba(0, 1, 1, 1, 0)
+            grad.add_color_stop_rgba(0.5, 1, 1, 1, 0.45)
+            grad.add_color_stop_rgba(1, 1, 1, 1, 0)
+            cr.set_source(grad)
             cr.fill()
-            cr.set_source_rgba(*c, 0.8)
-            cr.move_to(x + 14, 15)
-            cr.show_text(name)
-            x += 14 + cr.text_extents(name).x_advance + 16
-        cr.set_source_rgba(*c, 0.5)
-        label = f"last {HISTORY // 60} min"
-        cr.move_to(w - right - cr.text_extents(label).x_advance, 15)
-        cr.show_text(label)
-
-        n = len(self.data)
-        if n < 2:
-            return
-        step = pw / (HISTORY - 1)
-        x0 = left + pw - step * (n - 1)
-        for idx, col, lo, hi, _name in series:
-            pts = []
-            for i, row in enumerate(self.data):
-                v = row[idx]
-                if v is None:
-                    continue
-                f = max(0.0, min(1.0, (v - lo) / (hi - lo)))
-                pts.append((x0 + i * step, top + ph * (1 - f)))
-            if len(pts) < 2:
-                continue
-            cr.move_to(*pts[0])
-            for p in pts[1:]:
-                cr.line_to(*p)
-            cr.set_source_rgb(*col)
+        else:
+            cr.new_path()
+        if self.limit < 100:
+            x = w * self.limit / 100
+            cr.set_source_rgba(*fgc, 0.75)
             cr.set_line_width(2)
-            cr.stroke_preserve()
-            cr.line_to(pts[-1][0], top + ph)
-            cr.line_to(pts[0][0], top + ph)
-            cr.close_path()
-            cr.set_source_rgba(*col, 0.10)
-            cr.fill()
+            cr.move_to(x, 0)
+            cr.line_to(x, h)
+            cr.stroke()
 
 
 class Window(Adw.ApplicationWindow):
     def __init__(self, app):
         super().__init__(application=app, title="Performance Control")
-        self.set_default_size(560, 760)
+        self.set_default_size(1080, -1)
         self.syncing = False
         self.asus = hwmon("asus")
         self.coretemp = hwmon("coretemp")
         self.fan_max = 6500
         self.bus = Gio.bus_get_sync(Gio.BusType.SYSTEM, None)
+        self.has_battery = bool(read(THRESHOLD))
 
         css = Gtk.CssProvider()
         css.load_from_string(CSS)
@@ -230,73 +410,119 @@ class Window(Adw.ApplicationWindow):
 
         self.toasts = Adw.ToastOverlay()
         view = Adw.ToolbarView()
-        view.add_top_bar(Adw.HeaderBar())
-        page = Adw.PreferencesPage()
-        view.set_content(page)
+        header = Adw.HeaderBar()
+        header.set_title_widget(Adw.WindowTitle(title="Performance Control", subtitle=cpu_name()))
+        header.pack_end(self.build_settings())
+        view.add_top_bar(header)
+
+        cols = Gtk.Box(spacing=28, margin_top=18, margin_bottom=22, margin_start=24, margin_end=24)
+        left = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=22, hexpand=True)
+        right = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=22, width_request=400)
+        cols.append(left)
+        cols.append(right)
+        for box, sections in ((left, (self.build_mode(), self.build_live(), self.build_cooling())),
+                              (right, ((self.build_battery(),) if self.has_battery else ())
+                               + (self.build_details(),))):
+            for i, w in enumerate(sections):
+                w.add_css_class("rise")
+                w.add_css_class(f"d{i + (2 if box is right else 0)}")
+                box.append(w)
+
+        scroll = Gtk.ScrolledWindow(hscrollbar_policy=Gtk.PolicyType.NEVER,
+                                    propagate_natural_height=True, child=cols)
+        view.set_content(scroll)
         self.toasts.set_child(view)
         self.set_content(self.toasts)
 
-        # Gauges
-        top = Adw.PreferencesGroup()
-        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8,
-                       css_classes=["card", "gauge-card"])
-        gauges = Gtk.Box(homogeneous=True)
-        self.g_temp = Gauge("CPU temp", "°C", TEMP_MIN, TEMP_MAX)
-        self.g_fan = Gauge("Fan", "RPM", 0, self.fan_max, FAN_COLOR)
-        self.g_freq = Gauge("CPU clock", "GHz", 0, FREQ_MAX, FREQ_COLOR, "{:.1f}")
-        self.g_watts = Gauge("CPU power", "W", 0, 45, None, "{:.1f}")
-        for g in (self.g_temp, self.g_fan, self.g_freq, self.g_watts):
-            gauges.append(g)
-        card.append(gauges)
-        self.chips = {}
-        for row_names in (("power", "turbo", "gov"), ("limits", "tcc", "sensors"),
-                          ("target", "engine"), ("trips", "throttle")):
-            box = Gtk.Box(spacing=6, halign=Gtk.Align.CENTER, margin_bottom=6)
-            for n in row_names:
-                self.chips[n] = Gtk.Label(css_classes=["chip"])
-                box.append(self.chips[n])
-            card.append(box)
-        self.chips["throttle"].set_label("Thermal throttling")
-        self.chips["throttle"].set_css_classes(["chip", "warn"])
-        top.add(card)
-        page.add(top)
+        self.sync_controls()
+        self.refresh()
+        GLib.timeout_add_seconds(1, self.refresh)
 
-        # History
-        hist = Adw.PreferencesGroup(title="Live")
-        hcard = Gtk.Box(css_classes=["card"], margin_top=2)
-        self.history = History()
-        for side in ("start", "end", "top", "bottom"):
-            getattr(self.history, f"set_margin_{side}")(6)
-        hcard.append(self.history)
-        hist.add(hcard)
-        page.add(hist)
+    # -- layout --------------------------------------------------------------
+    def build_settings(self):
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8, css_classes=["settings-pop"])
+        box.append(Gtk.Label(label="Appearance", xalign=0, css_classes=["heading"]))
+        self.theme = Adw.ToggleGroup()
+        for name, label, icon in (("system", "System", "emblem-system-symbolic"),
+                                  ("light", "Light", "weather-clear-symbolic"),
+                                  ("dark", "Dark", "weather-clear-night-symbolic")):
+            self.theme.add(Adw.Toggle(name=name, label=label, icon_name=icon))
+        self.theme.set_active_name(self.get_application().theme)
+        self.theme.connect("notify::active-name",
+                           lambda t, _p: self.get_application().set_theme(t.get_active_name()))
+        box.append(self.theme)
+        return Gtk.MenuButton(icon_name="open-menu-symbolic", tooltip_text="Settings",
+                              popover=Gtk.Popover(child=box))
 
-        # Controls
-        ctl = Adw.PreferencesGroup(
-            title="Mode",
-            description="Same modes as MyASUS: the firmware picks the fan table and Intel DTT "
-                        "(via thermald) applies ASUS's power-limit policy for the mode.")
-        self.mode_row = Adw.ActionRow(title="Performance mode")
-        self.mode = Adw.ToggleGroup(valign=Gtk.Align.CENTER)
-        for name, label in MODES:
-            self.mode.add(Adw.Toggle(name=name, label=label))
-        self.mode.connect("notify::active-name",
-                          lambda t, _p: None if self.syncing else self.set_mode(t.get_active_name()))
-        self.mode_row.add_suffix(self.mode)
-        ctl.add(self.mode_row)
-        self.fan_row = Adw.ActionRow(title="Fan", subtitle="Full speed overrides the firmware fan table")
+    def build_mode(self):
+        group = Adw.PreferencesGroup(title="Mode")
+        box = Gtk.Box(spacing=10, homogeneous=True)
+        self.mode_buttons = {}
+        first = None
+        for name, label, icon, sub in MODES:
+            content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+            content.append(Gtk.Image(icon_name=icon, pixel_size=28, margin_bottom=6))
+            content.append(Gtk.Label(label=label, css_classes=["mode-name"]))
+            content.append(Gtk.Label(label=sub, css_classes=["mode-sub"]))
+            btn = Gtk.ToggleButton(child=content, css_classes=["mode-card"], group=first)
+            btn.connect("toggled", self.on_mode_toggled, name)
+            first = first or btn
+            self.mode_buttons[name] = btn
+            box.append(btn)
+        group.add(box)
+        return group
+
+    def build_live(self):
+        group = Adw.PreferencesGroup(title="Live")
+        group.set_header_suffix(Gtk.Label(label=f"last {HISTORY // 60} min",
+                                          css_classes=["dim-label", "caption"]))
+        grid = Gtk.Grid(column_spacing=12, row_spacing=12, column_homogeneous=True)
+        self.fan_icon = FanIcon(FAN_COLOR)
+        self.t_temp = Tile("CPU temperature", "°C", TEMP_COLOR, TEMP_MIN, TEMP_MAX)
+        self.t_power = Tile("Package power", "W", POWER_COLOR, 0, 45, "{:.1f}")
+        self.t_freq = Tile("CPU clock", "GHz", FREQ_COLOR, 0, FREQ_MAX, "{:.1f}")
+        self.t_fan = Tile("Fan", "RPM", FAN_COLOR, 0, self.fan_max, icon=self.fan_icon)
+        grid.attach(self.t_temp, 0, 0, 1, 1)
+        grid.attach(self.t_power, 1, 0, 1, 1)
+        grid.attach(self.t_freq, 0, 1, 1, 1)
+        grid.attach(self.t_fan, 1, 1, 1, 1)
+        group.add(grid)
+        return group
+
+    def build_cooling(self):
+        group = Adw.PreferencesGroup(title="Cooling")
+        self.fan_row = Adw.ActionRow(title="Fan")
         self.fan = Adw.ToggleGroup(valign=Gtk.Align.CENTER)
         for name, label in (("auto", "Auto"), ("full", "Full speed")):
             self.fan.add(Adw.Toggle(name=name, label=label))
         self.fan.connect("notify::active-name",
                          lambda t, _p: None if self.syncing else self.run("fan", t.get_active_name()))
         self.fan_row.add_suffix(self.fan)
-        ctl.add(self.fan_row)
-        page.add(ctl)
+        group.add(self.fan_row)
+        return group
 
-        # Battery
-        self.has_battery = bool(read(THRESHOLD))
-        bat = Adw.PreferencesGroup(title="Battery", visible=self.has_battery)
+    def build_battery(self):
+        group = Adw.PreferencesGroup(title="Battery")
+        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+
+        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8,
+                       css_classes=["card", "battery-card"])
+        top = Gtk.Box(spacing=8)
+        self.bat_pct = Gtk.Label(css_classes=["tile-value"], valign=Gtk.Align.BASELINE)
+        top.append(self.bat_pct)
+        self.bat_state = Gtk.Label(css_classes=["dim-label"], valign=Gtk.Align.BASELINE,
+                                   xalign=0, hexpand=True)
+        top.append(self.bat_state)
+        self.bat_icon = Gtk.Image(pixel_size=20, valign=Gtk.Align.CENTER)
+        top.append(self.bat_icon)
+        card.append(top)
+        self.bat_bar = BatteryBar()
+        card.append(self.bat_bar)
+        self.bat_eta = Gtk.Label(xalign=0, css_classes=["caption", "dim-label"])
+        card.append(self.bat_eta)
+        outer.append(card)
+
+        rows = Gtk.ListBox(css_classes=["boxed-list"], selection_mode=Gtk.SelectionMode.NONE)
         self.limit_row = Adw.ActionRow(title="Charge limit")
         self.limit = Adw.ToggleGroup(valign=Gtk.Align.CENTER)
         for name, label in CHARGE_LIMITS:
@@ -305,23 +531,39 @@ class Window(Adw.ApplicationWindow):
                            lambda t, _p: None if self.syncing or not t.get_active_name()
                            else self.run("battery", "limit", t.get_active_name()))
         self.limit_row.add_suffix(self.limit)
-        bat.add(self.limit_row)
-        self.once_row = Adw.ActionRow(title="One-time full charge")
+        rows.append(self.limit_row)
+        self.once_row = Adw.ActionRow(title="One-time full charge", subtitle_lines=2)
         self.once_btn = Gtk.Button(valign=Gtk.Align.CENTER)
         self.once_btn.connect("clicked", self.toggle_full_once)
         self.once_row.add_suffix(self.once_btn)
-        bat.add(self.once_row)
-        page.add(bat)
+        rows.append(self.once_row)
+        outer.append(rows)
+        group.add(outer)
+        return group
 
-        self.sync_controls()
-        self.refresh()
-        GLib.timeout_add_seconds(1, self.refresh)
+    def build_details(self):
+        self.details = Adw.PreferencesGroup(title="Power policy")
+        card = Gtk.Box(css_classes=["card", "detail-card"])
+        grid = Gtk.Grid(row_spacing=7, column_spacing=16, hexpand=True)
+        self.detail_vals = {}
+        for i, (key, title) in enumerate((("engine", "Policy engine"), ("target", "DTT target"),
+                                          ("range", "Target range"), ("limits", "Applied limits"),
+                                          ("tcc", "Thermal limit"), ("sensors", "Skin sensors"),
+                                          ("trips", "Thermal trips"), ("cpu", "Turbo · governor"))):
+            grid.attach(Gtk.Label(label=title, xalign=0, css_classes=["key"]), 0, i, 1, 1)
+            val = Gtk.Label(xalign=1, hexpand=True, css_classes=["value"],
+                            ellipsize=3)  # Pango.EllipsizeMode.END
+            grid.attach(val, 1, i, 1, 1)
+            self.detail_vals[key] = val
+        card.append(grid)
+        self.details.add(card)
+        return self.details
 
-    # -- helpers -----------------------------------------------------------
-    def set_toggle(self, tg, name):
-        self.syncing = True
-        tg.set_active_name(name)
-        self.syncing = False
+    # -- helpers -------------------------------------------------------------
+    def detail(self, key, text, cls=None):
+        lbl = self.detail_vals[key]
+        lbl.set_label(text)
+        lbl.set_css_classes(["value"] + ([cls] if cls else []))
 
     def name_has_owner(self, name):
         try:
@@ -331,6 +573,10 @@ class Window(Adw.ApplicationWindow):
             return r.unpack()[0]
         except GLib.Error:
             return False
+
+    def on_mode_toggled(self, btn, mode):
+        if btn.get_active() and not self.syncing:
+            self.set_mode(mode)
 
     def set_mode(self, mode):
         """Prefer power-profiles-daemon so GNOME's power mode stays in sync."""
@@ -374,42 +620,66 @@ class Window(Adw.ApplicationWindow):
         self.run("battery", "cancel" if full_once else "full-once")
 
     def sync_controls(self):
+        self.syncing = True
         mode = read(PROFILE, "balanced")
-        self.set_toggle(self.mode, mode)
-        self.mode_row.set_subtitle(MODE_INFO.get(mode, ""))
+        if mode in self.mode_buttons:
+            self.mode_buttons[mode].set_active(True)
+        self.details.set_description(MODE_INFO.get(mode, ""))
         full = self.asus and read(f"{self.asus}/pwm1_enable") == "0"
-        self.set_toggle(self.fan, "full" if full else "auto")
+        self.fan.set_active_name("full" if full else "auto")
+        self.fan_row.set_subtitle("Locked at full speed" if full else "Firmware fan curve for the mode")
         if self.has_battery:
             limit, full_once = self.battery_state()
-            self.set_toggle(self.limit, limit)
-            self.limit_row.set_subtitle(CHARGE_INFO.get(limit, f"Stops charging at {limit} %"))
-            on_ac = read("/sys/class/power_supply/AC0/online") == "1"
+            self.limit.set_active_name(limit)
+            self.limit_row.set_subtitle(CHARGE_INFO.get(limit, f"Stops at {limit} %"))
+            on_ac = read(AC) == "1"
             if full_once:
-                self.once_row.set_subtitle(f"Charging to 100 % now · back to {limit} % "
-                                           "when full or unplugged")
+                self.once_row.set_subtitle(f"Charging to 100 % · back to {limit} % when full or unplugged")
                 self.once_btn.set_label("Cancel")
-                self.once_btn.set_css_classes([])
+                self.once_btn.set_css_classes(["pill"])
                 self.once_btn.set_sensitive(True)
             else:
-                self.once_row.set_subtitle(
-                    "Charge to 100 % this time only, then return to the limit"
-                    if on_ac else "Plug in the charger to use this")
+                self.once_row.set_subtitle("Charge to 100 % this time, then return to the limit"
+                                           if on_ac else "Plug in the charger to use this")
                 self.once_btn.set_label("Charge to 100 %")
-                self.once_btn.set_css_classes(["suggested-action"])
+                self.once_btn.set_css_classes(["pill", "suggested-action"])
                 self.once_btn.set_sensitive(on_ac and limit != "100")
+        self.syncing = False
 
-    def chip(self, name, text, on=None):
-        c = self.chips[name]
-        c.set_label(text)
-        if on is not None:
-            c.set_css_classes(["chip", "on"] if on else ["chip"])
+    def refresh_battery(self, on_ac):
+        cap = read_num(f"{BAT}/capacity") or 0
+        status = read(f"{BAT}/status")
+        charging = status == "Charging"
+        limit, full_once = self.battery_state()
+        target = 100 if full_once else int(limit) if limit.isdigit() else 100
+        self.bat_pct.set_label(f"{cap} %")
+        self.bat_state.set_label("Charging" if charging else "Plugged in" if on_ac else "On battery")
+        level = min(100, cap // 10 * 10)
+        self.bat_icon.set_from_icon_name(
+            f"battery-level-{level}{'-charging' if charging else ''}-symbolic")
+        self.bat_icon.set_css_classes(["charging-icon"] if charging else [])
+        self.bat_bar.update(cap, target, charging)
+
+        now, full, power = (read_num(f"{BAT}/energy_now"), read_num(f"{BAT}/energy_full"),
+                            read_num(f"{BAT}/power_now"))
+        eta = ""
+        if now and full and power and power > 500000:
+            if charging:
+                eta = f"About {fmt_duration(max(0, full * target / 100 - now) / power)} to {target} %"
+            elif not on_ac:
+                eta = f"About {fmt_duration(now / power)} left · {power / 1e6:.1f} W"
+        if not eta:
+            eta = (f"Held at the {target} % limit" if on_ac and cap >= target - 1
+                   else f"Limit {target} %")
+        self.bat_eta.set_label(eta)
 
     def refresh(self):
         temp = int(read(f"{self.coretemp}/temp1_input", "0")) / 1000 if self.coretemp else None
         rpm = int(read(f"{self.asus}/fan1_input", "0")) if self.asus else None
         if rpm and rpm > self.fan_max:
             self.fan_max = int(math.ceil(rpm * 1.15 / 500) * 500)
-            self.history.fan_max = self.fan_max
+            self.t_fan.spark.hi = self.fan_max
+        self.fan_icon.rpm = rpm or 0
         freqs = [int(read(p, "0")) / 1e6
                  for p in glob.glob(f"{CPU}/cpu[0-9]*/cpufreq/scaling_cur_freq")]
         freq = max(freqs) if freqs else None
@@ -417,39 +687,44 @@ class Window(Adw.ApplicationWindow):
         watts = state.get("power")
         pl1 = int(read(f"{MMIO}/constraint_0_power_limit_uw", "0")) // 1000000
         pl2 = int(read(f"{MMIO}/constraint_1_power_limit_uw", "0")) // 1000000
-
-        self.g_temp.set_value(temp)
-        self.g_fan.set_value(rpm, self.fan_max)
-        self.g_freq.set_value(freq)
-        self.g_watts.set_value(watts, max(pl2, 1))
-        self.history.watt_max = max(pl2, 1)
-        self.history.push(temp, rpm, freq, watts)
-
-        on_ac = read("/sys/class/power_supply/AC0/online") == "1"
-        self.chip("power", "⚡ Plugged in" if on_ac
-                  else f"🔋 {read('/sys/class/power_supply/BAT0/capacity')}%")
-        turbo = read(f"{CPU}/intel_pstate/no_turbo") != "1"
-        self.chip("turbo", f"Turbo {'on' if turbo else 'off'}", turbo)
-        self.chip("gov", f"{read(f'{CPU}/cpufreq/policy0/scaling_governor').capitalize()} · EPP "
-                         f"{read(f'{CPU}/cpufreq/policy0/energy_performance_preference').replace('_', ' ')}")
-        self.chip("limits", f"PL1 {pl1} W · PL2 {pl2} W")
-        tgt, pol, skin, sen2 = (state.get("target"), state.get("policy", {}),
-                                state.get("skin"), state.get("sen2"))
         tcc = state.get("tcc")
-        self.chip("tcc", f"TCC −{tcc} → {100 - tcc} °C" if tcc is not None else "TCC –")
-        self.chip("sensors", "SEN1 " + (f"{skin:.0f}" if skin is not None else "–")
-                  + " · SEN2 " + (f"{sen2:.0f}" if sen2 is not None else "–") + " °C")
-        if tgt:
-            self.chip("target", f"DTT {tgt.replace('_', ' ')} · PL1 {pol.get('pl1_min')}–{pol.get('pl1_max')} W"
-                                f" · PL2 {pol.get('pl2')} W", True)
-        else:
-            self.chip("target", "State daemon not running", False)
-        cnt = state.get("throttle_count")
-        self.chip("trips", f"Thermal trips {cnt:,}" if cnt is not None else "Thermal trips –")
+        throttled = bool(state.get("throttled"))
+
+        trip = 100 - tcc if tcc is not None else None
+        level = None
+        if temp is not None and trip is not None:
+            level = "crit" if temp >= trip - 1 else "hot" if temp >= trip - 8 else None
+        self.t_temp.set(temp, "Throttling" if throttled else (f"limit {trip} °C" if trip else ""),
+                        level)
+        self.t_temp.note.set_css_classes(["tile-note"] + (["warn"] if throttled else []))
+        self.t_power.spark.hi = max(pl2, 1)
+        self.t_power.set(watts, f"PL1 {pl1} W · PL2 {pl2} W" if pl2 else "")
+        self.t_freq.set(freq, f"max {FREQ_MAX} GHz")
+        full = self.asus and read(f"{self.asus}/pwm1_enable") == "0"
+        self.t_fan.set(rpm, "full speed" if full else "auto")
+
+        if self.has_battery:
+            self.refresh_battery(read(AC) == "1")
+
         thermald = self.name_has_owner("org.freedesktop.thermald")
-        self.chip("engine", "Policy: thermald (ASUS DTT)" if thermald else "Policy: none — firmware defaults",
-                  thermald)
-        self.chips["throttle"].set_visible(bool(state.get("throttled")))
+        tgt, pol = state.get("target"), state.get("policy", {})
+        skin, sen2 = state.get("skin"), state.get("sen2")
+        self.detail("engine", "thermald · ASUS DTT" if thermald else "Firmware defaults",
+                    "good" if thermald else "bad")
+        self.detail("target", tgt.replace("_", " ") if tgt else "State daemon not running",
+                    None if tgt else "bad")
+        self.detail("range", f"PL1 {pol.get('pl1_min')}–{pol.get('pl1_max')} W · PL2 {pol.get('pl2')} W"
+                    if tgt else "–")
+        self.detail("limits", f"PL1 {pl1} W · PL2 {pl2} W")
+        self.detail("tcc", f"{trip} °C (TCC −{tcc})" if tcc is not None else "–")
+        self.detail("sensors", "SEN1 " + (f"{skin:.0f}" if skin is not None else "–")
+                    + " · SEN2 " + (f"{sen2:.0f}" if sen2 is not None else "–") + " °C")
+        cnt = state.get("throttle_count")
+        self.detail("trips", f"{cnt:,}" if cnt is not None else "–")
+        turbo = "Turbo on" if read(f"{CPU}/intel_pstate/no_turbo") != "1" else "Turbo off"
+        gov = read(f"{CPU}/cpufreq/policy0/scaling_governor").capitalize()
+        epp = read(f"{CPU}/cpufreq/policy0/energy_performance_preference").replace("_", " ")
+        self.detail("cpu", f"{turbo} · {gov} · {epp}")
         if not self.syncing:
             self.sync_controls()
         return True
@@ -458,9 +733,31 @@ class Window(Adw.ApplicationWindow):
 class App(Adw.Application):
     def __init__(self):
         super().__init__(application_id="local.PerfControl")
+        self.theme = read_json(SETTINGS, {}).get("theme", "system")
+        if self.theme not in THEMES:
+            self.theme = "system"
+
+    def do_startup(self):
+        Adw.Application.do_startup(self)
+        Adw.StyleManager.get_default().set_color_scheme(THEMES[self.theme])
+
+    def set_theme(self, name):
+        if name not in THEMES:
+            return
+        self.theme = name
+        Adw.StyleManager.get_default().set_color_scheme(THEMES[name])
+        try:
+            os.makedirs(os.path.dirname(SETTINGS), exist_ok=True)
+            with open(SETTINGS, "w") as f:
+                json.dump({"theme": name}, f)
+        except OSError:
+            pass
 
     def do_activate(self):
-        (self.props.active_window or Window(self)).present()
+        win = self.props.active_window or Window(self)
+        win.present()
+        # no keyboard focus ring on the first mode card at startup
+        GLib.idle_add(lambda: win.set_focus_visible(False))
 
 
 if __name__ == "__main__":
