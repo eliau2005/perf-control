@@ -95,6 +95,35 @@ chmod 755 /usr/local/bin/perf-control /usr/local/libexec/perfctl-helper
 ```
 then §3 for the fan daemon the old UI expects.
 
+## 6a. Battery charge limit (`perfctl-battery*.service`)
+
+What changed: `install.sh` disables and removes the hand‑made
+`battery-charge-threshold.service` (fixed 80 %) and installs
+`perfctl-battery.service` (re‑applies the saved limit at boot/resume) and
+`perfctl-battery-watch.service` (runs only during a one‑time full charge).
+State: `/var/lib/perfctl/battery.json`.
+
+Undo (back to a fixed 80 %):
+```sh
+systemctl disable --now perfctl-battery.service; systemctl stop perfctl-battery-watch.service
+rm -f /etc/systemd/system/perfctl-battery{,-watch}.service /var/lib/perfctl/battery.json
+cat > /etc/systemd/system/battery-charge-threshold.service <<'EOF2'
+[Unit]
+Description=Set battery charge threshold to 80%
+After=multi-user.target suspend.target hibernate.target hybrid-sleep.target suspend-then-hibernate.target
+StartLimitBurst=0
+
+[Service]
+Type=oneshot
+Restart=on-failure
+ExecStart=/bin/sh -c 'echo 80 > /sys/class/power_supply/BAT0/charge_control_end_threshold'
+
+[Install]
+WantedBy=multi-user.target suspend.target hibernate.target hybrid-sleep.target suspend-then-hibernate.target
+EOF2
+systemctl daemon-reload && systemctl enable --now battery-charge-threshold.service
+```
+
 ## 7. Packages installed
 
 `acpica-tools glmark2-wayland intel-gpu-tools autoconf-archive` and thermald

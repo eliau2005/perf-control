@@ -1,0 +1,13 @@
+[Unit]
+Description=Performance Control battery charge limit
+After=multi-user.target suspend.target hibernate.target hybrid-sleep.target suspend-then-hibernate.target
+StartLimitBurst=0
+
+[Service]
+Type=oneshot
+Restart=on-failure
+RestartSec=2
+ExecStart=/usr/local/libexec/perfctl-helper battery apply
+
+[Install]
+WantedBy=multi-user.target suspend.target hibernate.target hybrid-sleep.target suspend-then-hibernate.target

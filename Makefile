@@ -10,7 +10,8 @@ PY := bin/perf-control libexec/perfctld libexec/perfctl-helper bench/*.py tools/
 # what install.sh and thermald/install.sh need, plus docs
 DIST_FILES := VERSION README.md install.sh docs/ROLLBACK.md \
 	bin/perf-control bin/powermon libexec/perfctld libexec/perfctl-helper \
-	systemd/perfctld.service polkit/local.perfctl.policy share/local.PerfControl.desktop \
+	systemd/perfctld.service systemd/perfctl-battery.service \
+	systemd/perfctl-battery-watch.service polkit/local.perfctl.policy share/local.PerfControl.desktop \
 	thermald/README.md thermald/install.sh thermald/override.conf thermald/vault-override.sh \
 	tools/gddv_dump.py tools/gddv_patch.py tools/gddv_lzma_check.cpp \
 	research/gddv/x1402_p28_0322-cool89.bin

@@ -1,0 +1,6 @@
+[Unit]
+Description=Performance Control one-time full charge (restore the limit when full or unplugged)
+
+[Service]
+Type=simple
+ExecStart=/usr/local/libexec/perfctl-helper battery watch
